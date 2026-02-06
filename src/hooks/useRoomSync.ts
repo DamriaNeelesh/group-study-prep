@@ -34,7 +34,6 @@ export type RoomState = {
 export type PresenceMeta = {
   userId: string;
   displayName: string | null;
-  audio: boolean;
   handRaised: boolean;
 };
 
@@ -72,7 +71,6 @@ function presenceUsersFromState(state: RealtimePresenceState<PresenceMeta>) {
     users.push({
       userId: meta?.userId ?? key,
       displayName: meta?.displayName ?? null,
-      audio: Boolean(meta?.audio),
       handRaised: Boolean(meta?.handRaised),
       connections: metas.length,
     });
@@ -209,11 +207,21 @@ export function useRoomSync(args: {
       if (!roomId || !userId) return;
       const at = new Date().toISOString();
 
-      await sendRoomEvent("video:set", { roomId, userId, at, videoId });
+      await sendRoomEvent("video:set", {
+        roomId,
+        userId,
+        at,
+        videoId,
+        // Default behaviour: setting a video starts it immediately (late joiners use DB state).
+        isPaused: videoId ? false : true,
+        positionSeconds: 0,
+        playbackRate: 1,
+      });
       await updateRoomRow({
         current_video_id: videoId,
-        is_paused: true,
+        is_paused: videoId ? false : true,
         playback_position_seconds: 0,
+        playback_rate: 1,
       });
     },
     [roomId, sendRoomEvent, updateRoomRow, userId],
@@ -296,8 +304,11 @@ export function useRoomSync(args: {
     const updatedAtMs = new Date(room.updatedAt).getTime();
     if (!Number.isFinite(updatedAtMs)) return room.playbackPositionSeconds;
     if (!nowMs) return room.playbackPositionSeconds;
-    const deltaSeconds = (nowMs - updatedAtMs) / 1000;
-    return room.playbackPositionSeconds + deltaSeconds * room.playbackRate;
+    const deltaSeconds = Math.max(0, (nowMs - updatedAtMs) / 1000);
+    return Math.max(
+      0,
+      room.playbackPositionSeconds + deltaSeconds * room.playbackRate,
+    );
   }, [nowMs, state.room]);
 
   useEffect(() => {
@@ -314,7 +325,6 @@ export function useRoomSync(args: {
     presenceMetaRef.current = {
       userId,
       displayName: null,
-      audio: false,
       handRaised: false,
     };
 
@@ -353,6 +363,9 @@ export function useRoomSync(args: {
             : typeof payload?.videoId === "string"
               ? payload.videoId
               : null;
+        const isPaused = typeof payload?.isPaused === "boolean" ? payload.isPaused : !videoId;
+        const positionSeconds = Number(payload?.positionSeconds ?? 0);
+        const receivedAt = new Date().toISOString();
         setState((s) =>
           s.room
             ? {
@@ -360,8 +373,12 @@ export function useRoomSync(args: {
                 room: {
                   ...s.room,
                   currentVideoId: videoId,
-                  isPaused: true,
-                  playbackPositionSeconds: 0,
+                  isPaused,
+                  playbackPositionSeconds: Number.isFinite(positionSeconds)
+                    ? positionSeconds
+                    : 0,
+                  playbackRate: 1,
+                  updatedAt: receivedAt,
                 },
               }
             : s,
@@ -369,7 +386,7 @@ export function useRoomSync(args: {
       })
       .on("broadcast", { event: "video:play" }, ({ payload }) => {
         const positionSeconds = Number(payload?.positionSeconds ?? 0);
-        const at = String(payload?.at ?? new Date().toISOString());
+        const receivedAt = new Date().toISOString();
         setState((s) =>
           s.room
             ? {
@@ -380,7 +397,7 @@ export function useRoomSync(args: {
                   playbackPositionSeconds: Number.isFinite(positionSeconds)
                     ? positionSeconds
                     : s.room.playbackPositionSeconds,
-                  updatedAt: at,
+                  updatedAt: receivedAt,
                 },
               }
             : s,
@@ -388,7 +405,7 @@ export function useRoomSync(args: {
       })
       .on("broadcast", { event: "video:pause" }, ({ payload }) => {
         const positionSeconds = Number(payload?.positionSeconds ?? 0);
-        const at = String(payload?.at ?? new Date().toISOString());
+        const receivedAt = new Date().toISOString();
         setState((s) =>
           s.room
             ? {
@@ -399,7 +416,7 @@ export function useRoomSync(args: {
                   playbackPositionSeconds: Number.isFinite(positionSeconds)
                     ? positionSeconds
                     : s.room.playbackPositionSeconds,
-                  updatedAt: at,
+                  updatedAt: receivedAt,
                 },
               }
             : s,
@@ -407,7 +424,7 @@ export function useRoomSync(args: {
       })
       .on("broadcast", { event: "video:seek" }, ({ payload }) => {
         const positionSeconds = Number(payload?.positionSeconds ?? 0);
-        const at = String(payload?.at ?? new Date().toISOString());
+        const receivedAt = new Date().toISOString();
         setState((s) =>
           s.room
             ? {
@@ -417,7 +434,7 @@ export function useRoomSync(args: {
                   playbackPositionSeconds: Number.isFinite(positionSeconds)
                     ? positionSeconds
                     : s.room.playbackPositionSeconds,
-                  updatedAt: at,
+                  updatedAt: receivedAt,
                 },
               }
             : s,

@@ -6,6 +6,10 @@ import { useRouter } from "next/navigation";
 import { requireSupabaseBrowserClient } from "@/lib/supabase/client";
 import { useSupabaseAuth } from "@/hooks/useSupabaseAuth";
 import { SiteHeader } from "@/components/SiteHeader";
+import {
+  extractRoomIdFromInput,
+  looksLikeShortRoomCode,
+} from "@/lib/roomId";
 
 export default function HomePage() {
   const router = useRouter();
@@ -39,8 +43,20 @@ export default function HomePage() {
   }
 
   function joinRoom() {
-    const id = roomId.trim();
-    if (!id) return;
+    const input = roomId.trim();
+    if (!input) return;
+
+    const id = extractRoomIdFromInput(input);
+    if (!id) {
+      setError(
+        looksLikeShortRoomCode(input)
+          ? "That looks like a short code (first 8 chars). Please paste the full Room ID (UUID) or the full room link."
+          : "Please paste a full Room ID (UUID) or a full room link like /room/<uuid>.",
+      );
+      return;
+    }
+
+    setError(null);
     router.push(`/room/${id}`);
   }
 
@@ -63,7 +79,7 @@ export default function HomePage() {
                     Realtime Study Platform
                   </div>
                   <h1 className="mt-1 text-3xl font-extrabold tracking-tight text-white sm:text-4xl">
-                    Watch together. Talk together. Stay synced.
+                    Watch together. Stay synced.
                   </h1>
                   <p className="mt-2 max-w-xl text-sm text-white/85">
                     YouTube playback sync via Supabase Realtime broadcast + reliable DB state for late joiners.
@@ -89,7 +105,7 @@ export default function HomePage() {
                     <input
                       value={roomId}
                       onChange={(e) => setRoomId(e.target.value)}
-                      placeholder="Room ID"
+                      placeholder="Paste full room link or Room ID (UUID)"
                       className="h-12 w-full rounded-[10px] bg-white/90 px-4 text-sm font-semibold text-[#2b2b2b] outline-none placeholder:text-[#717171]"
                     />
                     <button

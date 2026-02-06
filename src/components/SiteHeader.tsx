@@ -4,6 +4,11 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 
+import {
+  extractRoomIdFromInput,
+  looksLikeShortRoomCode,
+} from "@/lib/roomId";
+
 function LogoMark() {
   return (
     <div className="flex items-center gap-2">
@@ -44,6 +49,7 @@ export function SiteHeader(props: {
 }) {
   const router = useRouter();
   const [q, setQ] = useState("");
+  const [joinError, setJoinError] = useState<string | null>(null);
 
   const trimmed = q.trim();
   const canGo = trimmed.length > 0;
@@ -80,7 +86,17 @@ export function SiteHeader(props: {
             onSubmit={(e) => {
               e.preventDefault();
               if (!canGo) return;
-              router.push(`/room/${trimmed}`);
+              const id = extractRoomIdFromInput(trimmed);
+              if (!id) {
+                setJoinError(
+                  looksLikeShortRoomCode(trimmed)
+                    ? "Paste full UUID or room link (not just the first 8 chars)."
+                    : "Paste a full room link or UUID.",
+                );
+                return;
+              }
+              setJoinError(null);
+              router.push(`/room/${id}`);
               setQ("");
             }}
           >
@@ -110,8 +126,11 @@ export function SiteHeader(props: {
               <input
                 className="h-10 w-full bg-transparent px-2 text-sm font-medium text-[var(--foreground)] outline-none"
                 value={q}
-                onChange={(e) => setQ(e.target.value)}
-                placeholder="Enter room code to join..."
+                onChange={(e) => {
+                  setQ(e.target.value);
+                  if (joinError) setJoinError(null);
+                }}
+                placeholder="Paste room link or UUID..."
               />
               <button
                 type="submit"
@@ -122,6 +141,11 @@ export function SiteHeader(props: {
                 Join
               </button>
             </div>
+            {joinError ? (
+              <div className="ml-3 text-xs font-semibold text-red-700">
+                {joinError}
+              </div>
+            ) : null}
           </form>
 
           <div className="ml-auto flex items-center gap-4">
@@ -170,15 +194,28 @@ export function SiteHeader(props: {
             onSubmit={(e) => {
               e.preventDefault();
               if (!canGo) return;
-              router.push(`/room/${trimmed}`);
+              const id = extractRoomIdFromInput(trimmed);
+              if (!id) {
+                setJoinError(
+                  looksLikeShortRoomCode(trimmed)
+                    ? "Paste full UUID or room link."
+                    : "Paste a full room link or UUID.",
+                );
+                return;
+              }
+              setJoinError(null);
+              router.push(`/room/${id}`);
               setQ("");
             }}
           >
             <input
               className="h-11 w-full rounded-[10px] bg-[var(--surface-2)] px-4 text-sm font-semibold text-[var(--foreground)] outline-none placeholder:text-[var(--muted)]"
               value={q}
-              onChange={(e) => setQ(e.target.value)}
-              placeholder="Enter room code to join..."
+              onChange={(e) => {
+                setQ(e.target.value);
+                if (joinError) setJoinError(null);
+              }}
+              placeholder="Paste room link or UUID..."
             />
             <button
               type="submit"
@@ -188,6 +225,11 @@ export function SiteHeader(props: {
               Join
             </button>
           </form>
+          {joinError ? (
+            <div className="mt-2 text-xs font-semibold text-red-700">
+              {joinError}
+            </div>
+          ) : null}
         </div>
       </div>
     </div>

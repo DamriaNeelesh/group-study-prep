@@ -15,7 +15,7 @@ const jetbrainsMono = JetBrains_Mono({
 
 export const metadata: Metadata = {
   title: "StudyRoom",
-  description: "Realtime collaborative study rooms (YouTube sync + audio chat)",
+  description: "Realtime collaborative study rooms (YouTube sync)",
 };
 
 export default function RootLayout({
@@ -24,7 +24,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning>
       <body
         suppressHydrationWarning
         className={`${redditSans.variable} ${jetbrainsMono.variable} antialiased`}

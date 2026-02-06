@@ -3,17 +3,18 @@
 import { useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 
-import { AudioChat } from "@/components/AudioChat";
 import { SyncedPlayer } from "@/components/SyncedPlayer";
 import { Toast } from "@/components/Toast";
 import { SiteHeader } from "@/components/SiteHeader";
 import { useRoomSync } from "@/hooks/useRoomSync";
 import { useSupabaseAuth } from "@/hooks/useSupabaseAuth";
+import { isUuid } from "@/lib/roomId";
 import { normalizeYouTubeId } from "@/lib/youtube";
 
 export default function RoomPage() {
   const params = useParams<{ id: string | string[] }>();
-  const roomId = typeof params.id === "string" ? params.id : params.id?.[0] ?? "";
+  const rawId = typeof params.id === "string" ? params.id : params.id?.[0] ?? "";
+  const roomId = isUuid(rawId) ? rawId : "";
   const router = useRouter();
   const auth = useSupabaseAuth();
 
@@ -48,7 +49,7 @@ export default function RoomPage() {
                 Room
               </div>
               <div className="text-lg font-extrabold tracking-tight text-[var(--foreground)]">
-                <span className="font-mono break-all">{roomId}</span>
+                <span className="font-mono break-all">{rawId}</span>
               </div>
               <div className="text-sm font-semibold text-[var(--muted)]">
                 Online: <span className="font-mono">{room.presence.length}</span>
@@ -59,6 +60,7 @@ export default function RoomPage() {
               <button
                 className="nt-btn nt-btn-outline"
                 onClick={() => void navigator.clipboard?.writeText(location.href)}
+                disabled={!roomId}
               >
                 Copy Link
               </button>
@@ -78,6 +80,26 @@ export default function RoomPage() {
             </div>
           </div>
         </header>
+
+        {!roomId ? (
+          <section className="mt-6 nt-card p-5">
+            <div className="text-sm font-extrabold text-[var(--foreground)]">
+              Invalid room link
+            </div>
+            <div className="mt-2 text-sm font-semibold text-[var(--muted)]">
+              This page expects a full Room ID (UUID). Paste the full room link (from
+              Copy Link) or create a new room from Home.
+            </div>
+            <div className="mt-4 flex flex-wrap gap-2">
+              <button
+                className="nt-btn nt-btn-primary"
+                onClick={() => router.push("/")}
+              >
+                Go Home
+              </button>
+            </div>
+          </section>
+        ) : null}
 
         {!auth.user ? (
           <section className="nt-card p-5">
@@ -182,13 +204,6 @@ export default function RoomPage() {
           </section>
 
           <aside className="flex flex-col gap-6">
-            <AudioChat
-              channel={room.channel}
-              selfUserId={auth.user?.id ?? null}
-              presence={room.presence}
-              updatePresence={room.updatePresence}
-            />
-
             <div className="nt-card p-4">
               <div className="text-sm font-extrabold text-[var(--foreground)]">Presence</div>
               <div className="mt-2 flex flex-col gap-2">
@@ -206,16 +221,11 @@ export default function RoomPage() {
                         </div>
                         <div className="text-xs font-medium text-[var(--muted)]">
                           <span className="font-mono" title={u.userId}>
-                            {u.userId.slice(0, 8)}…{u.userId.slice(-4)}
+                            {u.userId.slice(0, 8)}...{u.userId.slice(-4)}
                           </span>
                         </div>
                       </div>
                       <div className="flex items-center gap-2 text-xs font-semibold text-[var(--muted)]">
-                        {u.audio ? (
-                          <span className="rounded-full bg-[var(--accent-soft)] px-2 py-1 text-[var(--accent-2)]">
-                            Audio
-                          </span>
-                        ) : null}
                         {u.handRaised ? (
                           <span className="rounded-full bg-amber-50 px-2 py-1 text-amber-700">
                             Hand
