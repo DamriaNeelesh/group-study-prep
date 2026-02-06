@@ -54,6 +54,16 @@ export function SiteHeader(props: {
   const trimmed = q.trim();
   const canGo = trimmed.length > 0;
 
+  async function copyUserId() {
+    const userId = props.userId;
+    if (!userId) return;
+    try {
+      await navigator.clipboard?.writeText(userId);
+    } catch {
+      // ignore
+    }
+  }
+
   const rightCtaLabel = useMemo(() => {
     if (!props.userId) return "Login/Register";
     if (props.isGuest) return "Upgrade with Google";
@@ -88,16 +98,25 @@ export function SiteHeader(props: {
               if (!canGo) return;
               const id = extractRoomIdFromInput(trimmed);
               if (!id) {
+                if (
+                  looksLikeShortRoomCode(trimmed) &&
+                  props.userId?.toLowerCase().startsWith(trimmed.toLowerCase())
+                ) {
+                  setJoinError(null);
+                  router.push(`/room/${props.userId.toLowerCase()}`);
+                  setQ("");
+                  return;
+                }
                 setJoinError(
                   looksLikeShortRoomCode(trimmed)
-                    ? "Paste full UUID or room link (not just the first 8 chars)."
+                    ? "That looks like only the first 8 characters. Paste the full room UUID/link, or click your ID badge (top right) to copy the full Guest ID."
                     : "Paste a full room link or UUID.",
                 );
-                return;
-              }
-              setJoinError(null);
-              router.push(`/room/${id}`);
-              setQ("");
+                 return;
+               }
+               setJoinError(null);
+               router.push(`/room/${id}`);
+               setQ("");
             }}
           >
             <div className="flex w-full max-w-[560px] items-center overflow-hidden rounded-[10px] bg-[var(--surface-2)]">
@@ -164,10 +183,17 @@ export function SiteHeader(props: {
             </nav>
 
             {props.userId ? (
-              <span className="hidden rounded-full bg-white px-3 py-1 text-xs font-semibold text-[var(--foreground)] shadow-[0_1px_10px_rgba(0,0,0,0.06)] sm:inline">
-                <span className="font-mono">{props.userId.slice(0, 8)}</span>
+              <button
+                type="button"
+                className="hidden rounded-full bg-white px-3 py-1 text-xs font-semibold text-[var(--foreground)] shadow-[0_1px_10px_rgba(0,0,0,0.06)] sm:inline"
+                title="Click to copy full Guest ID"
+                onClick={() => void copyUserId()}
+              >
+                <span className="font-mono">
+                  {props.userId.slice(0, 8)}...{props.userId.slice(-4)}
+                </span>
                 {props.isGuest ? <span className="ml-2 nt-badge">Guest</span> : null}
-              </span>
+              </button>
             ) : null}
 
             <button
@@ -196,13 +222,22 @@ export function SiteHeader(props: {
               if (!canGo) return;
               const id = extractRoomIdFromInput(trimmed);
               if (!id) {
+                if (
+                  looksLikeShortRoomCode(trimmed) &&
+                  props.userId?.toLowerCase().startsWith(trimmed.toLowerCase())
+                ) {
+                  setJoinError(null);
+                  router.push(`/room/${props.userId.toLowerCase()}`);
+                  setQ("");
+                  return;
+                }
                 setJoinError(
                   looksLikeShortRoomCode(trimmed)
-                    ? "Paste full UUID or room link."
+                    ? "That looks like only the first 8 characters. Paste the full room UUID/link, or click your ID badge (top right on desktop) to copy the full Guest ID."
                     : "Paste a full room link or UUID.",
                 );
-                return;
-              }
+                  return;
+                }
               setJoinError(null);
               router.push(`/room/${id}`);
               setQ("");
