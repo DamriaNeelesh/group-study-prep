@@ -181,9 +181,9 @@ export function useRoomSync(args: {
   );
 
   const updateRoomRow = useCallback(
-    async (patch: Partial<RoomRow>) => {
-      if (!roomId) return;
-      if (!supabase) return;
+    async (patch: Partial<RoomRow>): Promise<RoomState | null> => {
+      if (!roomId) return null;
+      if (!supabase) return null;
 
       const { data, error } = await supabase
         .from("rooms")
@@ -194,10 +194,12 @@ export function useRoomSync(args: {
 
       if (error) {
         setState((s) => ({ ...s, error: error.message }));
-        return;
+        return null;
       }
 
-      setState((s) => ({ ...s, room: mapRoomRow(data as RoomRow) }));
+      const next = mapRoomRow(data as RoomRow);
+      setState((s) => ({ ...s, room: next }));
+      return next;
     },
     [roomId, supabase],
   );
@@ -207,21 +209,23 @@ export function useRoomSync(args: {
       if (!roomId || !userId) return;
       const at = new Date().toISOString();
 
-      await sendRoomEvent("video:set", {
-        roomId,
-        userId,
-        at,
-        videoId,
-        // Default behaviour: setting a video starts it immediately (late joiners use DB state).
-        isPaused: videoId ? false : true,
-        positionSeconds: 0,
-        playbackRate: 1,
-      });
-      await updateRoomRow({
+      const next = await updateRoomRow({
         current_video_id: videoId,
         is_paused: videoId ? false : true,
         playback_position_seconds: 0,
         playback_rate: 1,
+      });
+      if (!next) return;
+
+      await sendRoomEvent("video:set", {
+        roomId,
+        userId,
+        at,
+        videoId: next.currentVideoId,
+        isPaused: next.isPaused,
+        positionSeconds: next.playbackPositionSeconds,
+        playbackRate: next.playbackRate,
+        updatedAt: next.updatedAt,
       });
     },
     [roomId, sendRoomEvent, updateRoomRow, userId],
@@ -232,15 +236,21 @@ export function useRoomSync(args: {
       if (!roomId || !userId) return;
       const at = new Date().toISOString();
 
+      const next = await updateRoomRow({
+        is_paused: false,
+        playback_position_seconds: positionSeconds,
+      });
+      if (!next) return;
+
       await sendRoomEvent("video:play", {
         roomId,
         userId,
         at,
-        positionSeconds,
-      });
-      await updateRoomRow({
-        is_paused: false,
-        playback_position_seconds: positionSeconds,
+        videoId: next.currentVideoId,
+        isPaused: next.isPaused,
+        positionSeconds: next.playbackPositionSeconds,
+        playbackRate: next.playbackRate,
+        updatedAt: next.updatedAt,
       });
     },
     [roomId, sendRoomEvent, updateRoomRow, userId],
@@ -251,15 +261,21 @@ export function useRoomSync(args: {
       if (!roomId || !userId) return;
       const at = new Date().toISOString();
 
+      const next = await updateRoomRow({
+        is_paused: true,
+        playback_position_seconds: positionSeconds,
+      });
+      if (!next) return;
+
       await sendRoomEvent("video:pause", {
         roomId,
         userId,
         at,
-        positionSeconds,
-      });
-      await updateRoomRow({
-        is_paused: true,
-        playback_position_seconds: positionSeconds,
+        videoId: next.currentVideoId,
+        isPaused: next.isPaused,
+        positionSeconds: next.playbackPositionSeconds,
+        playbackRate: next.playbackRate,
+        updatedAt: next.updatedAt,
       });
     },
     [roomId, sendRoomEvent, updateRoomRow, userId],
@@ -270,14 +286,20 @@ export function useRoomSync(args: {
       if (!roomId || !userId) return;
       const at = new Date().toISOString();
 
+      const next = await updateRoomRow({
+        playback_position_seconds: positionSeconds,
+      });
+      if (!next) return;
+
       await sendRoomEvent("video:seek", {
         roomId,
         userId,
         at,
-        positionSeconds,
-      });
-      await updateRoomRow({
-        playback_position_seconds: positionSeconds,
+        videoId: next.currentVideoId,
+        isPaused: next.isPaused,
+        positionSeconds: next.playbackPositionSeconds,
+        playbackRate: next.playbackRate,
+        updatedAt: next.updatedAt,
       });
     },
     [roomId, sendRoomEvent, updateRoomRow, userId],
@@ -363,9 +385,14 @@ export function useRoomSync(args: {
             : typeof payload?.videoId === "string"
               ? payload.videoId
               : null;
-        const isPaused = typeof payload?.isPaused === "boolean" ? payload.isPaused : !videoId;
+        const isPaused =
+          typeof payload?.isPaused === "boolean" ? payload.isPaused : !videoId;
         const positionSeconds = Number(payload?.positionSeconds ?? 0);
-        const receivedAt = new Date().toISOString();
+        const playbackRate = Number(payload?.playbackRate ?? 1);
+        const updatedAt =
+          typeof payload?.updatedAt === "string"
+            ? payload.updatedAt
+            : new Date().toISOString();
         setState((s) =>
           s.room
             ? {
@@ -377,8 +404,8 @@ export function useRoomSync(args: {
                   playbackPositionSeconds: Number.isFinite(positionSeconds)
                     ? positionSeconds
                     : 0,
-                  playbackRate: 1,
-                  updatedAt: receivedAt,
+                  playbackRate: Number.isFinite(playbackRate) ? playbackRate : 1,
+                  updatedAt,
                 },
               }
             : s,
@@ -386,7 +413,11 @@ export function useRoomSync(args: {
       })
       .on("broadcast", { event: "video:play" }, ({ payload }) => {
         const positionSeconds = Number(payload?.positionSeconds ?? 0);
-        const receivedAt = new Date().toISOString();
+        const playbackRate = Number(payload?.playbackRate ?? 1);
+        const updatedAt =
+          typeof payload?.updatedAt === "string"
+            ? payload.updatedAt
+            : new Date().toISOString();
         setState((s) =>
           s.room
             ? {
@@ -397,7 +428,10 @@ export function useRoomSync(args: {
                   playbackPositionSeconds: Number.isFinite(positionSeconds)
                     ? positionSeconds
                     : s.room.playbackPositionSeconds,
-                  updatedAt: receivedAt,
+                  playbackRate: Number.isFinite(playbackRate)
+                    ? playbackRate
+                    : s.room.playbackRate,
+                  updatedAt,
                 },
               }
             : s,
@@ -405,7 +439,11 @@ export function useRoomSync(args: {
       })
       .on("broadcast", { event: "video:pause" }, ({ payload }) => {
         const positionSeconds = Number(payload?.positionSeconds ?? 0);
-        const receivedAt = new Date().toISOString();
+        const playbackRate = Number(payload?.playbackRate ?? 1);
+        const updatedAt =
+          typeof payload?.updatedAt === "string"
+            ? payload.updatedAt
+            : new Date().toISOString();
         setState((s) =>
           s.room
             ? {
@@ -416,7 +454,10 @@ export function useRoomSync(args: {
                   playbackPositionSeconds: Number.isFinite(positionSeconds)
                     ? positionSeconds
                     : s.room.playbackPositionSeconds,
-                  updatedAt: receivedAt,
+                  playbackRate: Number.isFinite(playbackRate)
+                    ? playbackRate
+                    : s.room.playbackRate,
+                  updatedAt,
                 },
               }
             : s,
@@ -424,7 +465,11 @@ export function useRoomSync(args: {
       })
       .on("broadcast", { event: "video:seek" }, ({ payload }) => {
         const positionSeconds = Number(payload?.positionSeconds ?? 0);
-        const receivedAt = new Date().toISOString();
+        const playbackRate = Number(payload?.playbackRate ?? 1);
+        const updatedAt =
+          typeof payload?.updatedAt === "string"
+            ? payload.updatedAt
+            : new Date().toISOString();
         setState((s) =>
           s.room
             ? {
@@ -434,7 +479,10 @@ export function useRoomSync(args: {
                   playbackPositionSeconds: Number.isFinite(positionSeconds)
                     ? positionSeconds
                     : s.room.playbackPositionSeconds,
-                  updatedAt: receivedAt,
+                  playbackRate: Number.isFinite(playbackRate)
+                    ? playbackRate
+                    : s.room.playbackRate,
+                  updatedAt,
                 },
               }
             : s,

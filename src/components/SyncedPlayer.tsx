@@ -21,9 +21,11 @@ function clampNonNegative(n: number) {
 
 export function SyncedPlayer(props: Props) {
   const playerRef = useRef<YouTubePlayer | null>(null);
+  const [playerReady, setPlayerReady] = useState(false);
   const suppressEventsRef = useRef(false);
   const lastVideoIdRef = useRef<string | null>(null);
   const [seekInput, setSeekInput] = useState<string>("");
+  const [autoplayBlocked, setAutoplayBlocked] = useState(false);
 
   const withSuppressedEvents = useCallback(async (fn: () => void | Promise<void>) => {
     suppressEventsRef.current = true;
@@ -51,6 +53,7 @@ export function SyncedPlayer(props: Props) {
   const onReady = useCallback(
     (e: YouTubeEvent) => {
       playerRef.current = e.target;
+      setPlayerReady(true);
     },
     [],
   );
@@ -60,11 +63,49 @@ export function SyncedPlayer(props: Props) {
       if (suppressEventsRef.current) return;
       // https://developers.google.com/youtube/iframe_api_reference#Playback_status
       // 1 = playing, 2 = paused
-      if (e.data === 1) props.onPlay(getCurrentTimeSafe());
+      if (e.data === 1) {
+        setAutoplayBlocked(false);
+        props.onPlay(getCurrentTimeSafe());
+      }
       if (e.data === 2) props.onPause(getCurrentTimeSafe());
     },
     [getCurrentTimeSafe, props],
   );
+
+  const wantsPlaying = Boolean(props.videoId && !props.isPaused);
+
+  // If the room is playing but the browser blocks autoplay, show a "Start" overlay.
+  useEffect(() => {
+    if (!playerReady) return;
+    if (!props.videoId) {
+      setAutoplayBlocked(false);
+      return;
+    }
+    if (!wantsPlaying) {
+      setAutoplayBlocked(false);
+      return;
+    }
+
+    const p = playerRef.current;
+    if (!p) return;
+
+    let cancelled = false;
+    const id = setTimeout(() => {
+      if (cancelled) return;
+      try {
+        const state = p.getPlayerState();
+        // 1 = playing, 3 = buffering
+        if (state !== 1 && state !== 3) setAutoplayBlocked(true);
+      } catch {
+        // ignore
+      }
+    }, 900);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(id);
+    };
+  }, [playerReady, props.videoId, wantsPlaying]);
 
   // Keep player aligned with authoritative room state.
   useEffect(() => {
@@ -78,8 +119,14 @@ export function SyncedPlayer(props: Props) {
 
       if (videoChanged) {
         lastVideoIdRef.current = props.videoId;
+        setAutoplayBlocked(false);
         try {
-          p.cueVideoById({ videoId: props.videoId, startSeconds: targetSeconds });
+          if (props.isPaused) {
+            p.cueVideoById({ videoId: props.videoId, startSeconds: targetSeconds });
+          } else {
+            // `loadVideoById` is better at starting at the right timestamp for late joiners.
+            p.loadVideoById({ videoId: props.videoId, startSeconds: targetSeconds });
+          }
         } catch {
           // ignore
         }
@@ -150,7 +197,7 @@ export function SyncedPlayer(props: Props) {
 
   return (
     <div className="w-full">
-      <div className="overflow-hidden rounded-[var(--radius-card)] border border-black/10 bg-white shadow-[var(--shadow-card)]">
+      <div className="relative overflow-hidden rounded-[var(--radius-card)] border border-black/10 bg-white shadow-[var(--shadow-card)]">
         {props.videoId ? (
           <YouTube
             videoId={props.videoId}
@@ -174,6 +221,46 @@ export function SyncedPlayer(props: Props) {
             Set a YouTube video to start.
           </div>
         )}
+
+        {props.videoId && wantsPlaying && autoplayBlocked ? (
+          <div className="absolute inset-0 flex items-center justify-center bg-black/50 p-4">
+            <div className="w-full max-w-md rounded-[14px] border border-white/20 bg-black/70 px-4 py-4 text-center text-white shadow-[0_20px_60px_rgba(0,0,0,0.35)]">
+              <div className="text-sm font-extrabold">
+                Click to start synced playback
+              </div>
+              <div className="mt-1 text-xs font-semibold text-white/80">
+                Autoplay is blocked. You will join live at{" "}
+                <span className="font-mono text-white">
+                  {Math.floor(props.effectivePositionSeconds)}s
+                </span>
+                .
+              </div>
+              <button
+                className="mt-3 nt-btn nt-btn-accent h-11 w-full"
+                onClick={() => {
+                  setAutoplayBlocked(false);
+                  void withSuppressedEvents(async () => {
+                    const p = playerRef.current;
+                    if (!p) return;
+                    const t = clampNonNegative(props.effectivePositionSeconds);
+                    try {
+                      p.seekTo(t, true);
+                    } catch {
+                      // ignore
+                    }
+                    try {
+                      p.playVideo();
+                    } catch {
+                      // ignore
+                    }
+                  });
+                }}
+              >
+                Start Now
+              </button>
+            </div>
+          </div>
+        ) : null}
       </div>
 
       <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
