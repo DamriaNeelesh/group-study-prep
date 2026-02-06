@@ -124,7 +124,9 @@ export default function HomePage() {
                 User ID
               </div>
               <div className="mt-1 rounded-[10px] bg-[var(--surface-2)] px-3 py-2 text-xs font-bold text-[var(--foreground)]">
-                <span className="font-mono">{auth.user?.id ?? "(connecting...)"}</span>
+                <span className="font-mono break-all">
+                  {auth.user?.id ?? "(connecting...)"}
+                </span>
               </div>
 
               <div className="mt-4 text-xs font-semibold text-[var(--muted)]">
@@ -143,7 +145,7 @@ export default function HomePage() {
                 <button
                   className="nt-btn nt-btn-outline"
                   onClick={() => void auth.signInWithGoogle()}
-                  disabled={!auth.user || busy}
+                  disabled={busy}
                 >
                   {auth.user?.is_anonymous ? "Upgrade with Google" : "Sign in with Google"}
                 </button>

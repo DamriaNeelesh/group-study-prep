@@ -5,6 +5,18 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 
+function formatAuthErrorMessage(message: string) {
+  const m = message.toLowerCase();
+  if (m.includes("anonymous sign-ins are disabled")) {
+    return [
+      "Anonymous sign-ins are disabled in your Supabase project.",
+      "Enable it in Supabase Dashboard: Authentication -> Providers -> Anonymous.",
+      "Or sign in with Google/email instead.",
+    ].join(" ");
+  }
+  return message;
+}
+
 type UseSupabaseAuthState = {
   isLoading: boolean;
   session: Session | null;
@@ -36,7 +48,7 @@ export function useSupabaseAuth() {
         .maybeSingle();
 
       if (error) {
-        setState((s) => ({ ...s, error: error.message }));
+        setState((s) => ({ ...s, error: formatAuthErrorMessage(error.message) }));
         return;
       }
 
@@ -57,7 +69,11 @@ export function useSupabaseAuth() {
       .then(({ data, error }) => {
         if (ignore) return;
         if (error) {
-          setState((s) => ({ ...s, isLoading: false, error: error.message }));
+          setState((s) => ({
+            ...s,
+            isLoading: false,
+            error: formatAuthErrorMessage(error.message),
+          }));
           return;
         }
 
@@ -75,7 +91,9 @@ export function useSupabaseAuth() {
         setState((s) => ({
           ...s,
           isLoading: false,
-          error: e instanceof Error ? e.message : String(e),
+          error: formatAuthErrorMessage(
+            e instanceof Error ? e.message : String(e),
+          ),
         }));
       });
 
@@ -95,7 +113,9 @@ export function useSupabaseAuth() {
     if (!supabase) return;
     setState((s) => ({ ...s, error: null }));
     const { error } = await supabase.auth.signInAnonymously();
-    if (error) setState((s) => ({ ...s, error: error.message }));
+    if (error) {
+      setState((s) => ({ ...s, error: formatAuthErrorMessage(error.message) }));
+    }
   }, [supabase]);
 
   const signInWithEmailOtp = useCallback(
@@ -109,7 +129,9 @@ export function useSupabaseAuth() {
           emailRedirectTo: `${location.origin}/`,
         },
       });
-      if (error) setState((s) => ({ ...s, error: error.message }));
+      if (error) {
+        setState((s) => ({ ...s, error: formatAuthErrorMessage(error.message) }));
+      }
     },
     [supabase],
   );
@@ -118,7 +140,9 @@ export function useSupabaseAuth() {
     if (!supabase) return;
     setState((s) => ({ ...s, error: null }));
     const { error } = await supabase.auth.signOut();
-    if (error) setState((s) => ({ ...s, error: error.message }));
+    if (error) {
+      setState((s) => ({ ...s, error: formatAuthErrorMessage(error.message) }));
+    }
   }, [supabase]);
 
   const signInWithGoogle = useCallback(async () => {
@@ -139,7 +163,10 @@ export function useSupabaseAuth() {
         });
 
     if (res.error) {
-      setState((s) => ({ ...s, error: res.error.message }));
+      setState((s) => ({
+        ...s,
+        error: formatAuthErrorMessage(res.error.message),
+      }));
       return;
     }
 
@@ -160,7 +187,9 @@ export function useSupabaseAuth() {
           { onConflict: "id" },
         );
 
-      if (error) setState((s) => ({ ...s, error: error.message }));
+      if (error) {
+        setState((s) => ({ ...s, error: formatAuthErrorMessage(error.message) }));
+      }
     },
     [state.user, supabase],
   );

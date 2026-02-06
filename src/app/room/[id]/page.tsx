@@ -48,7 +48,7 @@ export default function RoomPage() {
                 Room
               </div>
               <div className="text-lg font-extrabold tracking-tight text-[var(--foreground)]">
-                <span className="font-mono">{roomId}</span>
+                <span className="font-mono break-all">{roomId}</span>
               </div>
               <div className="text-sm font-semibold text-[var(--muted)]">
                 Online: <span className="font-mono">{room.presence.length}</span>
@@ -205,7 +205,9 @@ export default function RoomPage() {
                           {u.displayName || u.userId.slice(0, 8)}
                         </div>
                         <div className="text-xs font-medium text-[var(--muted)]">
-                          <span className="font-mono">{u.userId}</span>
+                          <span className="font-mono" title={u.userId}>
+                            {u.userId.slice(0, 8)}…{u.userId.slice(-4)}
+                          </span>
                         </div>
                       </div>
                       <div className="flex items-center gap-2 text-xs font-semibold text-[var(--muted)]">

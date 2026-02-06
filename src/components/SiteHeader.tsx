@@ -49,7 +49,7 @@ export function SiteHeader(props: {
   const canGo = trimmed.length > 0;
 
   const rightCtaLabel = useMemo(() => {
-    if (!props.userId) return "Connecting...";
+    if (!props.userId) return "Login/Register";
     if (props.isGuest) return "Upgrade with Google";
     return "Sign out";
   }, [props.isGuest, props.userId]);
@@ -149,18 +149,47 @@ export function SiteHeader(props: {
             <button
               className="nt-btn nt-btn-primary"
               onClick={() => {
-                if (!props.userId) return;
+                if (!props.userId) {
+                  props.onGoogle();
+                  return;
+                }
                 if (props.isGuest) props.onGoogle();
                 else props.onSignOut();
               }}
-              disabled={!props.userId}
             >
               {rightCtaLabel}
             </button>
           </div>
         </div>
       </div>
+
+      <div className="md:hidden">
+        <div className="nt-container pb-3">
+          <form
+            className="flex items-center gap-2"
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (!canGo) return;
+              router.push(`/room/${trimmed}`);
+              setQ("");
+            }}
+          >
+            <input
+              className="h-11 w-full rounded-[10px] bg-[var(--surface-2)] px-4 text-sm font-semibold text-[var(--foreground)] outline-none placeholder:text-[var(--muted)]"
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              placeholder="Enter room code to join..."
+            />
+            <button
+              type="submit"
+              className="nt-btn nt-btn-primary h-11 px-4"
+              disabled={!canGo}
+            >
+              Join
+            </button>
+          </form>
+        </div>
+      </div>
     </div>
   );
 }
-

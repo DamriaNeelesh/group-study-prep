@@ -117,7 +117,10 @@ export function AudioChat(props: {
           Object.entries(remoteStreams).map(([userId, stream]) => (
             <div key={userId} className="flex items-center justify-between gap-3">
               <div className="text-xs font-semibold text-[var(--foreground)]">
-                Listening to <span className="font-mono">{userId}</span>
+                Listening to{" "}
+                <span className="font-mono" title={userId}>
+                  {userId.slice(0, 8)}…{userId.slice(-4)}
+                </span>
               </div>
               <audio
                 autoPlay
