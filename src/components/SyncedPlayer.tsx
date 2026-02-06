@@ -150,7 +150,7 @@ export function SyncedPlayer(props: Props) {
 
   return (
     <div className="w-full">
-      <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm">
+      <div className="overflow-hidden rounded-[var(--radius-card)] border border-black/10 bg-white shadow-[var(--shadow-card)]">
         {props.videoId ? (
           <YouTube
             videoId={props.videoId}
@@ -170,27 +170,27 @@ export function SyncedPlayer(props: Props) {
             }}
           />
         ) : (
-          <div className="flex aspect-video w-full items-center justify-center bg-zinc-50 text-sm text-zinc-500">
+          <div className="flex aspect-video w-full items-center justify-center bg-[var(--surface-2)] text-sm font-semibold text-[var(--muted)]">
             Set a YouTube video to start.
           </div>
         )}
       </div>
 
       <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="text-sm text-zinc-600">
+        <div className="text-sm font-semibold text-[var(--muted)]">
           {props.videoId ? (
             <span>
               State:{" "}
-              <span className="font-medium text-zinc-900">
+              <span className="font-extrabold text-[var(--foreground)]">
                 {props.isPaused ? "Paused" : "Playing"}
               </span>{" "}
               at{" "}
-              <span className="font-mono text-zinc-900">
+              <span className="font-mono text-[var(--foreground)]">
                 {Math.floor(props.effectivePositionSeconds)}s
               </span>
             </span>
           ) : (
-            <span className="font-medium">No video</span>
+            <span className="font-extrabold text-[var(--foreground)]">No video</span>
           )}
         </div>
 
@@ -208,12 +208,12 @@ export function SyncedPlayer(props: Props) {
             value={seekInput}
             onChange={(e) => setSeekInput(e.target.value)}
             placeholder="Seek (sec)"
-            className="w-32 rounded-md border border-zinc-200 px-3 py-2 text-sm outline-none focus:border-zinc-400"
+            className="w-32 nt-input"
             inputMode="numeric"
           />
           <button
             type="submit"
-            className="rounded-md bg-zinc-900 px-3 py-2 text-sm font-medium text-white hover:bg-zinc-800"
+            className="nt-btn nt-btn-primary"
             disabled={!props.videoId}
           >
             Seek
@@ -223,4 +223,3 @@ export function SyncedPlayer(props: Props) {
     </div>
   );
 }
-

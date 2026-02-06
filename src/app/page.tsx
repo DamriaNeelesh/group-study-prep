@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 
 import { requireSupabaseBrowserClient } from "@/lib/supabase/client";
 import { useSupabaseAuth } from "@/hooks/useSupabaseAuth";
+import { SiteHeader } from "@/components/SiteHeader";
 
 export default function HomePage() {
   const router = useRouter();
@@ -44,135 +45,136 @@ export default function HomePage() {
   }
 
   return (
-    <div className="min-h-screen bg-zinc-50">
-      <main className="mx-auto flex w-full max-w-3xl flex-col gap-6 px-6 py-10">
-        <header className="flex flex-col gap-2">
-          <h1 className="text-2xl font-semibold tracking-tight text-zinc-900">
-            StudyRoom
-          </h1>
-          <p className="text-sm text-zinc-600">
-            Realtime YouTube sync and audio chat using Supabase Realtime +
-            WebRTC.
-          </p>
-        </header>
+    <div className="min-h-screen bg-[var(--background)]">
+      <SiteHeader
+        userId={auth.user?.id ?? null}
+        isGuest={Boolean(auth.user?.is_anonymous)}
+        onGoogle={() => void auth.signInWithGoogle()}
+        onSignOut={() => void auth.signOut()}
+      />
 
-        <section className="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm">
-          <div className="flex flex-col gap-4">
-            <div className="flex items-center justify-between gap-3">
-              <div className="text-sm text-zinc-700">
-                User:{" "}
-                <span className="font-mono text-zinc-900">
-                  {auth.user?.id ?? "(not signed in)"}
-                </span>
-                {auth.user?.is_anonymous ? (
-                  <span className="ml-2 rounded-full bg-zinc-100 px-2 py-1 text-xs text-zinc-700">
-                    Guest
-                  </span>
+      <main className="nt-container py-10">
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+          <section className="lg:col-span-2">
+            <div className="nt-green-card p-6">
+              <div className="relative z-10 flex flex-col gap-4">
+                <div>
+                  <div className="text-xs font-bold uppercase tracking-wide text-white/80">
+                    Realtime Study Platform
+                  </div>
+                  <h1 className="mt-1 text-3xl font-extrabold tracking-tight text-white sm:text-4xl">
+                    Watch together. Talk together. Stay synced.
+                  </h1>
+                  <p className="mt-2 max-w-xl text-sm text-white/85">
+                    YouTube playback sync via Supabase Realtime broadcast + reliable DB state for late joiners.
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <button
+                    className="nt-btn nt-btn-primary h-12"
+                    onClick={() => void createRoom()}
+                    disabled={!auth.user || busy}
+                  >
+                    Create Room
+                  </button>
+
+                  <form
+                    className="flex items-center gap-2"
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      joinRoom();
+                    }}
+                  >
+                    <input
+                      value={roomId}
+                      onChange={(e) => setRoomId(e.target.value)}
+                      placeholder="Room ID"
+                      className="h-12 w-full rounded-[10px] bg-white/90 px-4 text-sm font-semibold text-[#2b2b2b] outline-none placeholder:text-[#717171]"
+                    />
+                    <button
+                      className="nt-btn nt-btn-accent h-12 px-5"
+                      type="submit"
+                      disabled={!roomId.trim() || busy}
+                    >
+                      Join
+                    </button>
+                  </form>
+                </div>
+
+                {(auth.error || error) ? (
+                  <div className="rounded-[10px] border border-white/20 bg-black/20 px-4 py-3 text-sm text-white">
+                    {auth.error ?? error}
+                  </div>
                 ) : null}
               </div>
-              {auth.user ? (
-                <button
-                  className="rounded-md border border-zinc-200 px-3 py-2 text-sm font-medium hover:bg-zinc-50"
-                  onClick={() => void auth.signOut()}
-                >
-                  Sign out
-                </button>
-              ) : null}
             </div>
+          </section>
 
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-              <button
-                className="rounded-md border border-zinc-200 px-3 py-2 text-sm font-medium hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50"
-                onClick={() => void auth.signInWithGoogle()}
-                disabled={!auth.user || busy}
-              >
-                {auth.user?.is_anonymous ? "Upgrade with Google" : "Sign in with Google"}
-              </button>
-              <div className="text-xs text-zinc-600">
-                Google is optional. Guest mode works via anonymous auth.
+          <aside className="flex flex-col gap-6">
+            <div className="nt-card p-5">
+              <div className="flex items-center justify-between gap-3">
+                <div className="text-sm font-extrabold text-[var(--foreground)]">
+                  Your Profile
+                </div>
+                {auth.user?.is_anonymous ? <span className="nt-badge">Guest</span> : null}
               </div>
-            </div>
 
-            <div className="flex flex-col gap-2">
-              <label className="text-xs font-medium text-zinc-700">
-                Display name
-              </label>
+              <div className="mt-3 text-xs font-semibold text-[var(--muted)]">
+                User ID
+              </div>
+              <div className="mt-1 rounded-[10px] bg-[var(--surface-2)] px-3 py-2 text-xs font-bold text-[var(--foreground)]">
+                <span className="font-mono">{auth.user?.id ?? "(connecting...)"}</span>
+              </div>
+
+              <div className="mt-4 text-xs font-semibold text-[var(--muted)]">
+                Display name (Presence)
+              </div>
               <input
                 value={displayNameInput}
                 onChange={(e) => setDisplayNameInput(e.target.value)}
                 onBlur={() => void auth.setDisplayName(displayNameInput.trim())}
                 placeholder="e.g. Alex"
-                className="rounded-md border border-zinc-200 px-3 py-2 text-sm outline-none focus:border-zinc-400"
+                className="mt-1 w-full nt-input"
                 disabled={!auth.user}
               />
-              <div className="text-xs text-zinc-500">
-                This is used for Presence in rooms.
-              </div>
-            </div>
 
-            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-              <button
-                className="rounded-md bg-zinc-900 px-3 py-2 text-sm font-medium text-white hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50"
-                onClick={() => void createRoom()}
-                disabled={!auth.user || busy}
-              >
-                Create Room
-              </button>
-
-              <div className="flex gap-2">
-                <input
-                  value={roomId}
-                  onChange={(e) => setRoomId(e.target.value)}
-                  placeholder="Room ID (uuid)"
-                  className="w-full rounded-md border border-zinc-200 px-3 py-2 text-sm outline-none focus:border-zinc-400"
-                />
+              <div className="mt-4 flex flex-col gap-2">
                 <button
-                  className="rounded-md border border-zinc-200 px-3 py-2 text-sm font-medium hover:bg-zinc-50"
-                  onClick={joinRoom}
-                  disabled={!roomId.trim() || busy}
+                  className="nt-btn nt-btn-outline"
+                  onClick={() => void auth.signInWithGoogle()}
+                  disabled={!auth.user || busy}
                 >
-                  Join
+                  {auth.user?.is_anonymous ? "Upgrade with Google" : "Sign in with Google"}
                 </button>
+                <div className="text-xs font-medium text-[var(--muted)]">
+                  Google is optional. Guests can use rooms without it.
+                </div>
               </div>
             </div>
 
-            <details className="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2">
-              <summary className="cursor-pointer text-sm font-medium text-zinc-800">
-                Email login (optional)
+            <details className="nt-card p-5">
+              <summary className="cursor-pointer text-sm font-extrabold text-[var(--foreground)]">
+                Email Login (Optional)
               </summary>
-              <div className="mt-3 flex flex-col gap-2">
+              <div className="mt-4 flex flex-col gap-2">
                 <input
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   placeholder="you@example.com"
-                  className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm outline-none focus:border-zinc-400"
+                  className="nt-input"
                 />
                 <button
-                  className="rounded-md border border-zinc-200 px-3 py-2 text-sm font-medium hover:bg-white"
+                  className="nt-btn nt-btn-outline"
                   onClick={() => void auth.signInWithEmailOtp(email)}
                   disabled={!email.trim()}
                 >
                   Send magic link
                 </button>
-                <div className="text-xs text-zinc-600">
-                  For the rest of the app, anonymous auth works fine.
-                </div>
               </div>
             </details>
-
-            {auth.error ? (
-              <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
-                {auth.error}
-              </div>
-            ) : null}
-
-            {error ? (
-              <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
-                {error}
-              </div>
-            ) : null}
-          </div>
-        </section>
+          </aside>
+        </div>
       </main>
     </div>
   );
