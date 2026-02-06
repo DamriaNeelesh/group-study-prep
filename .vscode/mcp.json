@@ -1,0 +1,19 @@
+{
+	"servers": {
+		"supabase": {
+			"type": "http",
+			"url": "https://mcp.supabase.com/mcp?project_ref=avtmohfcixlzriichofq&read_only=true&features=account,database,docs,debugging,development,functions,branching,storage",
+			"headers": {
+				"Authorization": "Bearer ${input:supabase-access-token}"
+			}
+		}
+	},
+	"inputs": [
+		{
+			"id": "supabase-access-token",
+			"type": "promptString",
+			"description": "Supabase Personal Access Token",
+			"password": true
+		}
+	]
+}
