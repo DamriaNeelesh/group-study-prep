@@ -64,6 +64,11 @@ export default function HomePage() {
                 <span className="font-mono text-zinc-900">
                   {auth.user?.id ?? "(not signed in)"}
                 </span>
+                {auth.user?.is_anonymous ? (
+                  <span className="ml-2 rounded-full bg-zinc-100 px-2 py-1 text-xs text-zinc-700">
+                    Guest
+                  </span>
+                ) : null}
               </div>
               {auth.user ? (
                 <button
@@ -73,6 +78,19 @@ export default function HomePage() {
                   Sign out
                 </button>
               ) : null}
+            </div>
+
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <button
+                className="rounded-md border border-zinc-200 px-3 py-2 text-sm font-medium hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50"
+                onClick={() => void auth.signInWithGoogle()}
+                disabled={!auth.user || busy}
+              >
+                {auth.user?.is_anonymous ? "Upgrade with Google" : "Sign in with Google"}
+              </button>
+              <div className="text-xs text-zinc-600">
+                Google is optional. Guest mode works via anonymous auth.
+              </div>
             </div>
 
             <div className="flex flex-col gap-2">

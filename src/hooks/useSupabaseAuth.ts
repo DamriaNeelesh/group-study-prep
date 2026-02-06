@@ -121,6 +121,31 @@ export function useSupabaseAuth() {
     if (error) setState((s) => ({ ...s, error: error.message }));
   }, [supabase]);
 
+  const signInWithGoogle = useCallback(async () => {
+    if (!supabase) return;
+    setState((s) => ({ ...s, error: null }));
+
+    // If the user is currently anonymous, prefer linking Google so the user ID stays the same.
+    const isAnonymous = Boolean(state.user?.is_anonymous);
+    const redirectTo = `${location.origin}/`;
+    const res = isAnonymous
+      ? await supabase.auth.linkIdentity({
+          provider: "google",
+          options: { redirectTo },
+        })
+      : await supabase.auth.signInWithOAuth({
+          provider: "google",
+          options: { redirectTo },
+        });
+
+    if (res.error) {
+      setState((s) => ({ ...s, error: res.error.message }));
+      return;
+    }
+
+    if (res.data?.url) window.location.href = res.data.url;
+  }, [state.user?.is_anonymous, supabase]);
+
   const setDisplayName = useCallback(
     async (displayName: string) => {
       if (!supabase) return;
@@ -152,6 +177,7 @@ export function useSupabaseAuth() {
     ...state,
     signInAnonymously,
     signInWithEmailOtp,
+    signInWithGoogle,
     signOut,
     setDisplayName,
   };
