@@ -27,6 +27,13 @@ export function SyncedPlayer(props: Props) {
   const [seekInput, setSeekInput] = useState<string>("");
   const [autoplayBlocked, setAutoplayBlocked] = useState(false);
 
+  const isDocHidden = useCallback(() => {
+    // When a mobile user backgrounds the tab/app, YouTube often auto-pauses and timers
+    // get throttled. If we broadcast those "pause/seek" events, it degrades UX for everyone.
+    if (typeof document === "undefined") return false;
+    return Boolean(document.hidden);
+  }, []);
+
   const withSuppressedEvents = useCallback(async (fn: () => void | Promise<void>) => {
     suppressEventsRef.current = true;
     try {
@@ -61,6 +68,7 @@ export function SyncedPlayer(props: Props) {
   const onStateChange = useCallback(
     (e: YouTubeEvent<number>) => {
       if (suppressEventsRef.current) return;
+      if (isDocHidden()) return;
       // https://developers.google.com/youtube/iframe_api_reference#Playback_status
       // 1 = playing, 2 = paused
       if (e.data === 1) {
@@ -69,7 +77,7 @@ export function SyncedPlayer(props: Props) {
       }
       if (e.data === 2) props.onPause(getCurrentTimeSafe());
     },
-    [getCurrentTimeSafe, props],
+    [getCurrentTimeSafe, isDocHidden, props],
   );
 
   const wantsPlaying = Boolean(props.videoId && !props.isPaused);
@@ -178,6 +186,12 @@ export function SyncedPlayer(props: Props) {
         lastTickAt = Date.now();
         return;
       }
+      if (isDocHidden()) {
+        // Avoid false-positive seek detection when the tab is backgrounded and timers are throttled.
+        last = getCurrentTimeSafe();
+        lastTickAt = Date.now();
+        return;
+      }
 
       const now = Date.now();
       const dt = (now - lastTickAt) / 1000;
@@ -193,7 +207,7 @@ export function SyncedPlayer(props: Props) {
     }, 1000);
 
     return () => clearInterval(id);
-  }, [getCurrentTimeSafe, props]);
+  }, [getCurrentTimeSafe, isDocHidden, props]);
 
   return (
     <div className="w-full">
