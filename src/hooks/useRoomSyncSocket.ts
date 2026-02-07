@@ -1,0 +1,525 @@
+"use client";
+
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { io, type Socket } from "socket.io-client";
+import msgpackParser from "socket.io-msgpack-parser";
+
+import { getSupabaseBrowserClient } from "@/lib/supabase/client";
+
+type PlaybackState = "playing" | "paused";
+
+export type RoomStateV2 = {
+  roomId: string;
+  name: string;
+  videoId: string | null;
+  playbackState: PlaybackState;
+  videoTimeAtRef: number;
+  referenceTimeMs: number;
+  playbackRate: number;
+  seq: number;
+  controllerUserId: string | null;
+  audienceDelaySeconds: number;
+  createdBy: string | null;
+};
+
+type RoomAction = {
+  seq: number;
+  execAtMs: number;
+  serverNowMs: number;
+  command: { type: string; [k: string]: unknown };
+  patch: {
+    videoId: string | null;
+    playbackState: PlaybackState;
+    videoTimeAtRef: number;
+    referenceTimeMs: number;
+    playbackRate: number;
+    audienceDelaySeconds: number;
+    controllerUserId: string | null;
+  };
+};
+
+type UseRoomSyncSocketState = {
+  isReady: boolean;
+  error: string | null;
+  room: RoomStateV2 | null;
+  onlineCount: number;
+  toast: string | null;
+  lastRaiseHand: { fromUserId: string; at: string } | null;
+  offsetMs: number;
+  connection: "disconnected" | "connecting" | "connected" | "reconnecting";
+};
+
+type JoinOrStateResponse =
+  | { ok: true; state: RoomStateV2; pending: RoomAction[]; onlineCount: number }
+  | { ok: false; error: string };
+
+type CommandResponse =
+  | { ok: true; action?: RoomAction }
+  | { ok: false; error?: string; retryAfterMs?: number };
+
+function clampNonNegative(n: number) {
+  if (!Number.isFinite(n)) return 0;
+  return n < 0 ? 0 : n;
+}
+
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return Boolean(v) && typeof v === "object" && !Array.isArray(v);
+}
+
+function parseJoinOrStateResponse(res: unknown): JoinOrStateResponse {
+  if (!isRecord(res)) return { ok: false, error: "bad_response" };
+  if (res.ok !== true) {
+    const error = typeof res.error === "string" ? res.error : "request_failed";
+    return { ok: false, error };
+  }
+
+  const state = res.state as unknown;
+  const pending = res.pending as unknown;
+  const onlineCount = res.onlineCount as unknown;
+
+  if (!isRecord(state)) return { ok: false, error: "bad_state" };
+  if (!Array.isArray(pending)) return { ok: false, error: "bad_pending" };
+
+  return {
+    ok: true,
+    state: state as RoomStateV2,
+    pending: pending as RoomAction[],
+    onlineCount: typeof onlineCount === "number" ? onlineCount : Number(onlineCount ?? 0) || 0,
+  };
+}
+
+function computeExpectedTimeSeconds(state: RoomStateV2, serverNowMs: number) {
+  if (state.playbackState === "paused") return clampNonNegative(state.videoTimeAtRef);
+  const dtSec = Math.max(0, (serverNowMs - state.referenceTimeMs) / 1000);
+  return clampNonNegative(state.videoTimeAtRef + dtSec * state.playbackRate);
+}
+
+function randInt(min: number, max: number) {
+  return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+
+async function ntpSample(socket: Socket, timeoutMs: number) {
+  const t0 = Date.now();
+  const pong = await new Promise<{ t0: number; t1: number; t2: number }>((resolve, reject) => {
+    let done = false;
+    const id = window.setTimeout(() => {
+      if (done) return;
+      done = true;
+      reject(new Error("ntp_timeout"));
+    }, timeoutMs);
+
+    socket.emit("ntp:ping", { t0 }, (res: unknown) => {
+      if (done) return;
+      done = true;
+      window.clearTimeout(id);
+      const p = res as { t0?: unknown; t1?: unknown; t2?: unknown } | null;
+      resolve({
+        t0: typeof p?.t0 === "number" ? p.t0 : t0,
+        t1: typeof p?.t1 === "number" ? p.t1 : Date.now(),
+        t2: typeof p?.t2 === "number" ? p.t2 : Date.now(),
+      });
+    });
+  });
+  const t3 = Date.now();
+  const rtt = t3 - t0;
+  const offset = ((pong.t1 - pong.t0) + (pong.t2 - t3)) / 2;
+  return { offsetMs: offset, rttMs: rtt };
+}
+
+async function computeBestOffset(socket: Socket) {
+  let best: { offsetMs: number; rttMs: number } | null = null;
+  for (let i = 0; i < 5; i++) {
+    try {
+      const s = await ntpSample(socket, 1000);
+      if (!best || s.rttMs < best.rttMs) best = s;
+    } catch {
+      // ignore
+    }
+    await new Promise((r) => window.setTimeout(r, 60));
+  }
+  return best?.offsetMs ?? 0;
+}
+
+export function useRoomSyncSocket(args: {
+  roomId: string;
+  userId: string | null;
+  displayName: string;
+}) {
+  const supabase = useMemo(() => getSupabaseBrowserClient(), []);
+  const realtimeUrl = process.env.NEXT_PUBLIC_REALTIME_URL;
+  const missingEnvError = realtimeUrl
+    ? null
+    : "Missing env: NEXT_PUBLIC_REALTIME_URL (Socket sync backend URL)";
+
+  const [state, setState] = useState<UseRoomSyncSocketState>({
+    isReady: false,
+    error: missingEnvError,
+    room: null,
+    onlineCount: 0,
+    toast: null,
+    lastRaiseHand: null,
+    offsetMs: 0,
+    connection: realtimeUrl ? "connecting" : "disconnected",
+  });
+
+  const socketRef = useRef<Socket | null>(null);
+  const reconnectTimerRef = useRef<number | null>(null);
+  const backoffMsRef = useRef<number>(1000);
+
+  const actionTimersRef = useRef<Map<number, number>>(new Map());
+  const lastAppliedSeqRef = useRef<number>(0);
+
+  const offsetMsRef = useRef<number>(0);
+  const [nowMs, setNowMs] = useState(0);
+
+  useEffect(() => {
+    const id = window.setInterval(() => setNowMs(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, []);
+
+  const clearActionTimers = useCallback(() => {
+    for (const id of actionTimersRef.current.values()) window.clearTimeout(id);
+    actionTimersRef.current.clear();
+  }, []);
+
+  const applyActionNow = useCallback((action: RoomAction) => {
+    if (!action?.patch) return;
+    if (!Number.isFinite(action.seq)) return;
+    if (action.seq <= lastAppliedSeqRef.current) return;
+    lastAppliedSeqRef.current = action.seq;
+
+    setState((s) => {
+      const room = s.room;
+      if (!room) return s;
+      return {
+        ...s,
+        room: {
+          ...room,
+          seq: action.seq,
+          videoId: action.patch.videoId ?? null,
+          playbackState: action.patch.playbackState === "playing" ? "playing" : "paused",
+          videoTimeAtRef: clampNonNegative(Number(action.patch.videoTimeAtRef ?? 0)),
+          referenceTimeMs: Number(action.patch.referenceTimeMs ?? Date.now()),
+          playbackRate: Number(action.patch.playbackRate ?? 1),
+          audienceDelaySeconds: Number(action.patch.audienceDelaySeconds ?? 0),
+          controllerUserId: (action.patch.controllerUserId as string | null) ?? null,
+        },
+      };
+    });
+  }, []);
+
+  const scheduleAction = useCallback(
+    (action: RoomAction) => {
+      if (!Number.isFinite(action?.execAtMs)) return;
+      if (!Number.isFinite(action?.seq)) return;
+      if (action.seq <= lastAppliedSeqRef.current) return;
+      if (actionTimersRef.current.has(action.seq)) return;
+
+      const clientServerNowMs = Date.now() + offsetMsRef.current;
+      const delayMs = Math.max(0, action.execAtMs - clientServerNowMs);
+
+      const id = window.setTimeout(() => {
+        actionTimersRef.current.delete(action.seq);
+        applyActionNow(action);
+      }, delayMs);
+      actionTimersRef.current.set(action.seq, id);
+    },
+    [applyActionNow],
+  );
+
+  const resyncRoom = useCallback(async () => {
+    const socket = socketRef.current;
+    if (!socket || !socket.connected) return;
+
+    setState((s) => ({ ...s, isReady: false }));
+    try {
+      const offset = await computeBestOffset(socket);
+      offsetMsRef.current = offset;
+      setState((s) => ({ ...s, offsetMs: offset }));
+    } catch {
+      // ignore
+    }
+
+    const resp = await new Promise<JoinOrStateResponse>((resolve) => {
+      socket.emit("room:state:request", {}, (res: unknown) => {
+        resolve(parseJoinOrStateResponse(res));
+      });
+    });
+
+    if (!resp.ok) {
+      setState((s) => ({ ...s, isReady: true, error: resp.error || "Resync failed" }));
+      return;
+    }
+
+    clearActionTimers();
+    lastAppliedSeqRef.current = Number(resp.state?.seq ?? 0) || 0;
+    setState((s) => ({
+      ...s,
+      isReady: true,
+      error: null,
+      room: resp.state,
+      onlineCount: Number(resp.onlineCount ?? 0) || 0,
+    }));
+    for (const a of resp.pending || []) scheduleAction(a);
+  }, [clearActionTimers, scheduleAction]);
+
+  const connect = useCallback(() => {
+    const url = realtimeUrl;
+    if (!url) return;
+    if (!supabase) return;
+    if (!args.roomId) return;
+    if (!args.userId) return;
+
+    const existing = socketRef.current;
+    if (existing) return;
+
+    const socket = io(url, {
+      autoConnect: false,
+      transports: ["websocket"],
+      reconnection: false,
+      parser: msgpackParser,
+      auth: { token: "" },
+    });
+    socketRef.current = socket;
+
+    const cleanupReconnectTimer = () => {
+      if (reconnectTimerRef.current != null) {
+        window.clearTimeout(reconnectTimerRef.current);
+        reconnectTimerRef.current = null;
+      }
+    };
+
+    const scheduleReconnect = (retryAfterMs?: number) => {
+      cleanupReconnectTimer();
+      setState((s) => ({ ...s, connection: "reconnecting", isReady: false }));
+
+      const cap = 60_000;
+      const base = 1000;
+      const sleep = Math.max(250, retryAfterMs ?? backoffMsRef.current);
+      const nextSleep = Math.min(cap, randInt(base, sleep * 3));
+      backoffMsRef.current = nextSleep;
+
+      reconnectTimerRef.current = window.setTimeout(async () => {
+        if (!socketRef.current) return;
+        try {
+          const { data } = await supabase.auth.getSession();
+          const token = data.session?.access_token ?? "";
+          socket.auth = { token };
+        } catch {
+          // ignore
+        }
+        try {
+          socket.connect();
+        } catch {
+          // ignore
+        }
+      }, sleep);
+    };
+
+    socket.on("connect", () => {
+      cleanupReconnectTimer();
+      backoffMsRef.current = 1000;
+      setState((s) => ({ ...s, connection: "connected", error: null }));
+
+      void (async () => {
+        try {
+          const offset = await computeBestOffset(socket);
+          offsetMsRef.current = offset;
+          setState((s) => ({ ...s, offsetMs: offset }));
+        } catch {
+          // ignore
+        }
+
+        socket.emit("room:join", { roomId: args.roomId }, (res: unknown) => {
+          const r = parseJoinOrStateResponse(res);
+          if (!r.ok) {
+            setState((s) => ({
+              ...s,
+              isReady: false,
+              error: String(r.error || "Join failed"),
+            }));
+            return;
+          }
+
+          clearActionTimers();
+          lastAppliedSeqRef.current = Number(r.state?.seq ?? 0) || 0;
+          setState((s) => ({
+            ...s,
+            isReady: true,
+            error: null,
+            room: r.state,
+            onlineCount: Number(r.onlineCount ?? 0) || 0,
+          }));
+
+          for (const a of r.pending || []) scheduleAction(a);
+        });
+      })();
+    });
+
+    socket.on("disconnect", () => {
+      setState((s) => ({ ...s, connection: "disconnected", isReady: false }));
+      scheduleReconnect();
+    });
+
+    socket.on("connect_error", (err: unknown) => {
+      const msg = isRecord(err)
+        ? String(err.message || "")
+        : String((err as { message?: unknown } | null)?.message ?? "");
+      if (msg.startsWith("rate_limited:")) {
+        const retry = Number(msg.split(":")[1] ?? 0);
+        scheduleReconnect(Number.isFinite(retry) ? retry : undefined);
+        return;
+      }
+      scheduleReconnect();
+    });
+
+    socket.on("presence:update", (p: unknown) => {
+      const room = isRecord(p) ? String(p.roomId || "") : "";
+      if (room !== args.roomId) return;
+      const n = isRecord(p) ? Number(p.onlineCount ?? 0) || 0 : 0;
+      setState((s) => ({ ...s, onlineCount: n }));
+    });
+
+    socket.on("room:hand", (p: unknown) => {
+      const fromUserId = isRecord(p) ? String(p.fromUserId ?? "") : "";
+      const at = isRecord(p) ? String(p.at ?? new Date().toISOString()) : new Date().toISOString();
+      if (!fromUserId) return;
+      setState((s) => ({
+        ...s,
+        lastRaiseHand: { fromUserId, at },
+        toast: `${fromUserId.slice(0, 8)} raised a hand`,
+      }));
+    });
+
+    socket.on("room:action", (action: RoomAction) => {
+      scheduleAction(action);
+    });
+
+    void (async () => {
+      try {
+        const { data } = await supabase.auth.getSession();
+        const token = data.session?.access_token ?? "";
+        socket.auth = { token };
+      } catch {
+        // ignore
+      }
+      try {
+        socket.connect();
+      } catch {
+        // ignore
+      }
+    })();
+
+    // Resync on visibility restore (tab throttling + mobile backgrounding)
+    const onVis = () => {
+      if (document.hidden) return;
+      void resyncRoom();
+    };
+    document.addEventListener("visibilitychange", onVis);
+
+    return () => {
+      document.removeEventListener("visibilitychange", onVis);
+      cleanupReconnectTimer();
+      clearActionTimers();
+      socketRef.current = null;
+      try {
+        socket.disconnect();
+      } catch {
+        // ignore
+      }
+    };
+  }, [args.roomId, args.userId, clearActionTimers, realtimeUrl, resyncRoom, scheduleAction, supabase]);
+
+  useEffect(() => {
+    const cleanup = connect();
+    return () => cleanup?.();
+  }, [connect]);
+
+  const sendCommand = useCallback(async (command: Record<string, unknown>) => {
+    const socket = socketRef.current;
+    if (!socket || !socket.connected) return { ok: false, error: "not_connected" } as const;
+
+    const resp = await new Promise<CommandResponse>((resolve) => {
+      socket.emit("room:command", { command }, (res: unknown) => {
+        if (!isRecord(res)) return resolve({ ok: false, error: "bad_response" });
+        if (res.ok === true) return resolve({ ok: true, action: res.action as RoomAction | undefined });
+        resolve({
+          ok: false,
+          error: typeof res.error === "string" ? res.error : "command_failed",
+          retryAfterMs: typeof res.retryAfterMs === "number" ? res.retryAfterMs : undefined,
+        });
+      });
+    });
+    return resp;
+  }, []);
+
+  const canControl = useMemo(() => {
+    const room = state.room;
+    const userId = args.userId;
+    if (!room || !userId) return false;
+    const controller = room.controllerUserId || room.createdBy;
+    if (!controller) return true;
+    return controller === userId;
+  }, [args.userId, state.room]);
+
+  const effectivePlaybackPositionSeconds = useMemo(() => {
+    const room = state.room;
+    if (!room) return 0;
+    const serverNowMs = nowMs + state.offsetMs;
+    const expected = computeExpectedTimeSeconds(room, serverNowMs);
+    const withDelay = expected - (room.audienceDelaySeconds ?? 0);
+    return clampNonNegative(withDelay);
+  }, [nowMs, state.offsetMs, state.room]);
+
+  return {
+    ...state,
+    canControl,
+    effectivePlaybackPositionSeconds,
+    resyncRoom,
+    requestStageToken: async () => {
+      const socket = socketRef.current;
+      if (!socket || !socket.connected) {
+        return { ok: false, error: "not_connected" } as const;
+      }
+      const resp = await new Promise<
+        | { ok: true; token: string; url: string; room: string }
+        | { ok: false; error: string }
+      >((resolve) => {
+        socket.emit("stage:token", {}, (res: unknown) => {
+          if (!isRecord(res)) return resolve({ ok: false, error: "bad_response" });
+          if (res.ok === true) {
+            const token = typeof res.token === "string" ? res.token : "";
+            const url = typeof res.url === "string" ? res.url : "";
+            const room = typeof res.room === "string" ? res.room : "";
+            if (!token || !url || !room) return resolve({ ok: false, error: "bad_response" });
+            return resolve({ ok: true, token, url, room });
+          }
+          const error = typeof res.error === "string" ? res.error : "request_failed";
+          resolve({ ok: false, error });
+        });
+      });
+      return resp;
+    },
+    setVideo: async (videoId: string | null) => {
+      const res = await sendCommand({ type: "video:set", videoId });
+      if (!res.ok) setState((s) => ({ ...s, error: res.error || "Command failed" }));
+    },
+    play: async () => {
+      const res = await sendCommand({ type: "video:play" });
+      if (!res.ok) setState((s) => ({ ...s, error: res.error || "Command failed" }));
+    },
+    pause: async () => {
+      const res = await sendCommand({ type: "video:pause" });
+      if (!res.ok) setState((s) => ({ ...s, error: res.error || "Command failed" }));
+    },
+    seek: async (positionSeconds: number) => {
+      const res = await sendCommand({ type: "video:seek", positionSeconds });
+      if (!res.ok) setState((s) => ({ ...s, error: res.error || "Command failed" }));
+    },
+    raiseHand: async () => {
+      const res = await sendCommand({ type: "hand:raise" });
+      if (!res.ok) setState((s) => ({ ...s, error: res.error || "Command failed" }));
+    },
+    clearToast: () => setState((s) => ({ ...s, toast: null })),
+  };
+}

@@ -1,13 +1,15 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 
 import { SyncedPlayer } from "@/components/SyncedPlayer";
 import { RoomCall } from "@/components/RoomCall";
+import { StagePanel } from "@/components/StagePanel";
 import { Toast } from "@/components/Toast";
 import { SiteHeader } from "@/components/SiteHeader";
 import { useRoomSync } from "@/hooks/useRoomSync";
+import { useRoomSyncSocket } from "@/hooks/useRoomSyncSocket";
 import { useSupabaseAuth } from "@/hooks/useSupabaseAuth";
 import { isUuid } from "@/lib/roomId";
 import { normalizeYouTubeId } from "@/lib/youtube";
@@ -20,19 +22,45 @@ export default function RoomPage() {
   const auth = useSupabaseAuth();
   const [uiToast, setUiToast] = useState<string | null>(null);
 
-  const room = useRoomSync({
-    roomId,
-    userId: auth.user?.id ?? null,
+  const syncBackend =
+    process.env.NEXT_PUBLIC_SYNC_BACKEND === "socket" ? "socket" : "supabase";
+  const useSocket = syncBackend === "socket";
+
+  const roomSupabase = useRoomSync({
+    roomId: useSocket ? "" : roomId,
+    userId: useSocket ? null : auth.user?.id ?? null,
     displayName: auth.displayName,
   });
 
+  const roomSocket = useRoomSyncSocket({
+    roomId: useSocket ? roomId : "",
+    userId: useSocket ? auth.user?.id ?? null : null,
+    displayName: auth.displayName,
+  });
+
+  const onlineCount = useSocket ? roomSocket.onlineCount : roomSupabase.presence.length;
+  const canControl = useSocket ? roomSocket.canControl : true;
+  const isReady = useSocket ? roomSocket.isReady : roomSupabase.isReady;
+  const roomError = useSocket ? roomSocket.error : roomSupabase.error;
+  const toast = useSocket ? roomSocket.toast : roomSupabase.toast;
+  const effectivePositionSeconds = useSocket
+    ? roomSocket.effectivePlaybackPositionSeconds
+    : roomSupabase.effectivePlaybackPositionSeconds;
+
+  const currentVideoId = useSocket
+    ? roomSocket.room?.videoId ?? null
+    : roomSupabase.room?.currentVideoId ?? null;
+
+  const isPaused = useSocket
+    ? (roomSocket.room?.playbackState ?? "paused") !== "playing"
+    : roomSupabase.room?.isPaused ?? true;
+
+  const playbackRate = useSocket
+    ? roomSocket.room?.playbackRate ?? 1
+    : roomSupabase.room?.playbackRate ?? 1;
+
   const [videoInput, setVideoInput] = useState("");
   const [videoError, setVideoError] = useState<string | null>(null);
-
-  const me = useMemo(() => {
-    if (!auth.user) return null;
-    return room.presence.find((u) => u.userId === auth.user?.id) ?? null;
-  }, [auth.user, room.presence]);
 
   return (
     <div className="min-h-screen">
@@ -57,8 +85,18 @@ export default function RoomPage() {
                   Room
                 </span>
                 <span className="rounded-full bg-[var(--accent-soft)] px-3 py-1 text-xs font-extrabold text-[var(--accent-2)]">
-                  Online: <span className="font-mono">{room.presence.length}</span>
+                  Online: <span className="font-mono">{onlineCount}</span>
                 </span>
+                {useSocket ? (
+                  <span className="rounded-full bg-black/5 px-3 py-1 text-xs font-extrabold text-[var(--foreground)]">
+                    Sync v2 (Socket)
+                  </span>
+                ) : null}
+                {useSocket ? (
+                  <span className="rounded-full bg-black/5 px-3 py-1 text-xs font-extrabold text-[var(--foreground)]">
+                    {roomSocket.connection}
+                  </span>
+                ) : null}
               </div>
 
               <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -112,11 +150,12 @@ export default function RoomPage() {
                 className="nt-btn nt-btn-outline"
                 onClick={() => {
                   void (async () => {
-                    await room.resyncRoom();
+                    if (useSocket) await roomSocket.resyncRoom();
+                    else await roomSupabase.resyncRoom();
                     setUiToast("Resynced");
                   })();
                 }}
-                disabled={!room.isReady}
+                disabled={!isReady}
                 title="Reload room state from DB"
               >
                 Resync
@@ -165,9 +204,9 @@ export default function RoomPage() {
           </section>
         ) : null}
 
-        {room.error ? (
+        {roomError ? (
           <section className="rounded-[12px] border border-red-200 bg-red-50 p-5 text-sm font-semibold text-red-800">
-            {room.error}
+            {roomError}
           </section>
         ) : null}
 
@@ -181,29 +220,71 @@ export default function RoomPage() {
                       Synced YouTube
                     </div>
                     <div className="text-xs font-medium text-[var(--muted)]">
-                      Broadcast for fast control, DB update for reliable state.
+                      {useSocket
+                        ? "Server-authoritative sync (Socket.IO + Redis Streams). Only the host controls playback."
+                        : "Broadcast for fast control, DB update for reliable state."}
                     </div>
                   </div>
 
                   <div className="flex items-center gap-2">
                     <button
                       className="nt-btn nt-btn-accent"
-                      onClick={() => void room.raiseHand()}
-                      disabled={!room.isReady || !auth.user}
+                      onClick={() => void (useSocket ? roomSocket.raiseHand() : roomSupabase.raiseHand())}
+                      disabled={!isReady || !auth.user}
                     >
                       Raise Hand
                     </button>
-                    {me?.handRaised ? (
-                      <button
-                        className="nt-btn nt-btn-outline"
-                        onClick={() => void room.updatePresence({ handRaised: false })}
-                        disabled={!room.isReady}
-                      >
-                        Lower
-                      </button>
+
+                    {useSocket ? (
+                      <div className="ml-2 text-xs font-semibold text-[var(--muted)]">
+                        {canControl ? (
+                          <span className="rounded-full bg-[var(--surface-2)] px-2 py-1 text-[var(--foreground)]">
+                            You are the host
+                          </span>
+                        ) : (
+                          <span className="rounded-full bg-[var(--surface-2)] px-2 py-1 text-[var(--foreground)]">
+                            Host controls playback
+                          </span>
+                        )}
+                      </div>
                     ) : null}
                   </div>
                 </div>
+
+                {useSocket && canControl ? (
+                  <div className="flex flex-wrap items-center gap-2 rounded-[12px] border border-black/10 bg-[var(--surface-2)] p-3">
+                    <div className="text-xs font-extrabold text-[var(--foreground)]">
+                      Host controls
+                    </div>
+                    <button
+                      className="nt-btn nt-btn-primary h-10 px-4"
+                      onClick={() => void roomSocket.play()}
+                      disabled={!isReady || !currentVideoId}
+                      title="Play for everyone (scheduled)"
+                    >
+                      Play
+                    </button>
+                    <button
+                      className="nt-btn nt-btn-outline h-10 px-4"
+                      onClick={() => void roomSocket.pause()}
+                      disabled={!isReady || !currentVideoId}
+                      title="Pause for everyone (scheduled)"
+                    >
+                      Pause
+                    </button>
+                    <button
+                      className="nt-btn nt-btn-outline h-10 px-4"
+                      onClick={() => void roomSocket.resyncRoom()}
+                      disabled={!isReady}
+                      title="Fetch authoritative state + pending actions"
+                    >
+                      Sync Now
+                    </button>
+                    <div className="ml-auto text-[11px] font-semibold text-[var(--muted)]">
+                      Actions execute in ~2s to align everyone.
+                    </div>
+                  </div>
+                ) : null}
 
                 <form
                   className="flex flex-col gap-2 sm:flex-row sm:items-center"
@@ -215,7 +296,8 @@ export default function RoomPage() {
                       setVideoError("Please paste a valid YouTube URL or 11-char video ID.");
                       return;
                     }
-                    void room.setVideo(id);
+                    if (useSocket) void roomSocket.setVideo(id);
+                    else void roomSupabase.setVideo(id);
                     setVideoInput("");
                   }}
                 >
@@ -224,12 +306,12 @@ export default function RoomPage() {
                     onChange={(e) => setVideoInput(e.target.value)}
                     placeholder="YouTube URL or Video ID"
                     className="w-full nt-input"
-                    disabled={!room.isReady}
+                    disabled={!isReady || (useSocket && !canControl)}
                   />
                   <button
                     type="submit"
                     className="nt-btn nt-btn-primary"
-                    disabled={!room.isReady}
+                    disabled={!isReady || (useSocket && !canControl)}
                   >
                     Set Video
                   </button>
@@ -242,20 +324,26 @@ export default function RoomPage() {
                 ) : null}
 
                 <SyncedPlayer
-                  videoId={room.room?.currentVideoId ?? null}
-                  isPaused={room.room?.isPaused ?? true}
-                  effectivePositionSeconds={room.effectivePlaybackPositionSeconds}
-                  playbackRate={room.room?.playbackRate ?? 1}
-                  onPlay={(t) => void room.play(t)}
-                  onPause={(t) => void room.pause(t)}
-                  onSeek={(t) => void room.seek(t)}
+                  videoId={currentVideoId}
+                  isPaused={isPaused}
+                  effectivePositionSeconds={effectivePositionSeconds}
+                  playbackRate={playbackRate}
+                  onPlay={(t) => void (useSocket ? roomSocket.play() : roomSupabase.play(t))}
+                  onPause={(t) => void (useSocket ? roomSocket.pause() : roomSupabase.pause(t))}
+                  onSeek={(t) => void (useSocket ? roomSocket.seek(t) : roomSupabase.seek(t))}
+                  nativeControls={!useSocket}
+                  emitPlayerEvents={!useSocket}
+                  controlsDisabled={useSocket && !canControl}
                 />
               </div>
             </div>
           </section>
 
           <aside className="flex flex-col gap-6 lg:sticky lg:top-24 lg:self-start">
-            {roomId ? (
+            {useSocket ? (
+              <StagePanel requestToken={() => roomSocket.requestStageToken()} />
+            ) : null}
+            {!useSocket && roomId ? (
               <RoomCall
                 key={roomId}
                 roomId={roomId}
@@ -266,10 +354,22 @@ export default function RoomPage() {
             <div className="nt-card p-4">
               <div className="text-sm font-extrabold text-[var(--foreground)]">Presence</div>
               <div className="mt-2 flex flex-col gap-2">
-                {room.presence.length === 0 ? (
+                {useSocket ? (
+                  <div className="rounded-[12px] border border-black/10 bg-white p-3">
+                    <div className="text-xs font-semibold text-[var(--muted)]">
+                      Online now
+                    </div>
+                    <div className="mt-1 text-2xl font-extrabold text-[var(--foreground)]">
+                      {onlineCount}
+                    </div>
+                    <div className="mt-2 text-[11px] font-semibold text-[var(--muted)]">
+                      For large rooms, we only show the total count (not a full list).
+                    </div>
+                  </div>
+                ) : roomSupabase.presence.length === 0 ? (
                   <div className="text-xs font-medium text-[var(--muted)]">No one online.</div>
                 ) : (
-                  room.presence.map((u) => (
+                  roomSupabase.presence.map((u) => (
                     <div
                       key={u.userId}
                       className="flex items-center justify-between gap-3 rounded-[10px] border border-black/5 bg-white px-3 py-2"
@@ -303,12 +403,15 @@ export default function RoomPage() {
         </div>
       </main>
 
-      {uiToast || room.toast ? (
+      {uiToast || toast ? (
         <Toast
-          message={uiToast ?? room.toast ?? ""}
+          message={uiToast ?? toast ?? ""}
           onDismiss={() => {
             if (uiToast) setUiToast(null);
-            else room.clearToast();
+            else {
+              if (useSocket) roomSocket.clearToast();
+              else roomSupabase.clearToast();
+            }
           }}
         />
       ) : null}

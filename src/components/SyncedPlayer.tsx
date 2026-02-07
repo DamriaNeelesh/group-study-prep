@@ -12,6 +12,9 @@ type Props = {
   onPlay: (positionSeconds: number) => void;
   onPause: (positionSeconds: number) => void;
   onSeek: (positionSeconds: number) => void;
+  nativeControls?: boolean;
+  emitPlayerEvents?: boolean;
+  controlsDisabled?: boolean;
 };
 
 function clampNonNegative(n: number) {
@@ -27,6 +30,9 @@ export function SyncedPlayer(props: Props) {
   const [seekInput, setSeekInput] = useState<string>("");
   const [autoplayBlocked, setAutoplayBlocked] = useState(false);
   const lastBecameVisibleAtRef = useRef<number>(0);
+  const needsApplyRef = useRef(false);
+
+  const emitPlayerEvents = props.emitPlayerEvents !== false;
 
   const isDocHidden = useCallback(() => {
     // When a mobile user backgrounds the tab/app, YouTube often auto-pauses and timers
@@ -67,78 +73,26 @@ export function SyncedPlayer(props: Props) {
     }
   }, []);
 
-  const onReady = useCallback(
-    (e: YouTubeEvent) => {
-      playerRef.current = e.target;
-      setPlayerReady(true);
-    },
-    [],
-  );
-
-  const onStateChange = useCallback(
-    (e: YouTubeEvent<number>) => {
-      if (suppressEventsRef.current) return;
-      if (isDocHidden()) return;
-
-      // iOS/Android sometimes emits a "paused" state after the tab becomes visible again.
-      // Ignore these transient state changes so one user's backgrounding doesn't pause the room.
-      if (e.data === 2) {
-        const visibleAt = lastBecameVisibleAtRef.current;
-        if (visibleAt && Date.now() - visibleAt < 1500) return;
-      }
-      // https://developers.google.com/youtube/iframe_api_reference#Playback_status
-      // 1 = playing, 2 = paused
-      if (e.data === 1) {
-        setAutoplayBlocked(false);
-        props.onPlay(getCurrentTimeSafe());
-      }
-      if (e.data === 2) props.onPause(getCurrentTimeSafe());
-    },
-    [getCurrentTimeSafe, isDocHidden, props],
-  );
-
-  const wantsPlaying = Boolean(props.videoId && !props.isPaused);
-
-  // If the room is playing but the browser blocks autoplay, show a "Start" overlay.
-  useEffect(() => {
-    if (!playerReady) return;
-    if (!props.videoId) {
-      setAutoplayBlocked(false);
-      return;
-    }
-    if (!wantsPlaying) {
-      setAutoplayBlocked(false);
-      return;
-    }
-
-    const p = playerRef.current;
-    if (!p) return;
-
-    let cancelled = false;
-    const id = setTimeout(() => {
-      if (cancelled) return;
-      try {
-        const state = p.getPlayerState();
-        // 1 = playing, 3 = buffering
-        if (state !== 1 && state !== 3) setAutoplayBlocked(true);
-      } catch {
-        // ignore
-      }
-    }, 900);
-
-    return () => {
-      cancelled = true;
-      clearTimeout(id);
-    };
-  }, [playerReady, props.videoId, wantsPlaying]);
-
-  // Keep player aligned with authoritative room state.
-  useEffect(() => {
+  const applyAuthoritativeState = useCallback(async () => {
     const p = playerRef.current;
     if (!p) return;
     if (!props.videoId) return;
 
-    void withSuppressedEvents(async () => {
+    // If the player is buffering, delay state application to avoid races
+    // where YouTube internal buffering overrides play/pause/seek calls.
+    try {
+      const st = p.getPlayerState();
+      // 3 = BUFFERING
+      if (st === 3) {
+        needsApplyRef.current = true;
+        return;
+      }
+    } catch {
+      // ignore
+    }
+    needsApplyRef.current = false;
+
+    await withSuppressedEvents(async () => {
       const targetSeconds = clampNonNegative(props.effectivePositionSeconds);
       const videoChanged = lastVideoIdRef.current !== props.videoId;
 
@@ -187,11 +141,87 @@ export function SyncedPlayer(props: Props) {
     withSuppressedEvents,
   ]);
 
+  const onReady = useCallback(
+    (e: YouTubeEvent) => {
+      playerRef.current = e.target;
+      setPlayerReady(true);
+    },
+    [],
+  );
+
+  const onStateChange = useCallback(
+    (e: YouTubeEvent<number>) => {
+      if (suppressEventsRef.current) return;
+      if (isDocHidden()) return;
+
+      // iOS/Android sometimes emits a "paused" state after the tab becomes visible again.
+      // Ignore these transient state changes so one user's backgrounding doesn't pause the room.
+      if (e.data === 2) {
+        const visibleAt = lastBecameVisibleAtRef.current;
+        if (visibleAt && Date.now() - visibleAt < 1500) return;
+      }
+      // https://developers.google.com/youtube/iframe_api_reference#Playback_status
+      // 1 = playing, 2 = paused
+      if (e.data === 1) {
+        setAutoplayBlocked(false);
+        if (emitPlayerEvents) props.onPlay(getCurrentTimeSafe());
+      }
+      if (e.data === 2 && emitPlayerEvents) props.onPause(getCurrentTimeSafe());
+
+      // Drain delayed state application after buffering.
+      if ((e.data === 1 || e.data === 2) && needsApplyRef.current) {
+        void applyAuthoritativeState();
+      }
+    },
+    [applyAuthoritativeState, emitPlayerEvents, getCurrentTimeSafe, isDocHidden, props],
+  );
+
+  const wantsPlaying = Boolean(props.videoId && !props.isPaused);
+
+  // If the room is playing but the browser blocks autoplay, show a "Start" overlay.
+  useEffect(() => {
+    if (!playerReady) return;
+    if (!props.videoId) {
+      setAutoplayBlocked(false);
+      return;
+    }
+    if (!wantsPlaying) {
+      setAutoplayBlocked(false);
+      return;
+    }
+
+    const p = playerRef.current;
+    if (!p) return;
+
+    let cancelled = false;
+    const id = setTimeout(() => {
+      if (cancelled) return;
+      try {
+        const state = p.getPlayerState();
+        // 1 = playing, 3 = buffering
+        if (state !== 1 && state !== 3) setAutoplayBlocked(true);
+      } catch {
+        // ignore
+      }
+    }, 900);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(id);
+    };
+  }, [playerReady, props.videoId, wantsPlaying]);
+
+  // Keep player aligned with authoritative room state.
+  useEffect(() => {
+    void applyAuthoritativeState();
+  }, [applyAuthoritativeState]);
+
   // Detect manual seeks from the native YouTube controls (best-effort).
   useEffect(() => {
     const p = playerRef.current;
     if (!p) return;
     if (!props.videoId) return;
+    if (!emitPlayerEvents) return;
 
     let last = 0;
     let lastTickAt = Date.now();
@@ -224,7 +254,7 @@ export function SyncedPlayer(props: Props) {
     }, 1000);
 
     return () => clearInterval(id);
-  }, [getCurrentTimeSafe, isDocHidden, props]);
+  }, [emitPlayerEvents, getCurrentTimeSafe, isDocHidden, props]);
 
   return (
     <div className="w-full">
@@ -241,7 +271,7 @@ export function SyncedPlayer(props: Props) {
               height: "100%",
               playerVars: {
                 autoplay: 0,
-                controls: 1,
+                controls: props.nativeControls === false ? 0 : 1,
                 rel: 0,
                 modestbranding: 1,
               },
@@ -316,6 +346,7 @@ export function SyncedPlayer(props: Props) {
           className="flex items-center gap-2"
           onSubmit={(e) => {
             e.preventDefault();
+            if (props.controlsDisabled) return;
             const n = Number(seekInput);
             if (!Number.isFinite(n)) return;
             props.onSeek(clampNonNegative(n));
@@ -328,11 +359,12 @@ export function SyncedPlayer(props: Props) {
             placeholder="Seek (sec)"
             className="w-32 nt-input"
             inputMode="numeric"
+            disabled={Boolean(props.controlsDisabled)}
           />
           <button
             type="submit"
             className="nt-btn nt-btn-primary"
-            disabled={!props.videoId}
+            disabled={!props.videoId || Boolean(props.controlsDisabled)}
           >
             Seek
           </button>
