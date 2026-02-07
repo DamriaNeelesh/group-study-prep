@@ -16,12 +16,11 @@ function StreamTile(props: {
   muted?: boolean;
   mirror?: boolean;
   rightBadge?: string | null;
-  videoEnabled?: boolean;
 }) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const [playError, setPlayError] = useState<string | null>(null);
   const [hasVideo, setHasVideo] = useState(false);
-  const showVideo = hasVideo && (props.videoEnabled ?? true);
+  const showVideo = hasVideo;
 
   useEffect(() => {
     const el = videoRef.current;
@@ -122,7 +121,7 @@ function StreamTile(props: {
 
         {!showVideo ? (
           <div className="absolute inset-0 flex items-center justify-center bg-[#111]">
-            <div className="text-xs font-bold text-white/80">Camera off</div>
+            <div className="text-xs font-bold text-white/80">No video</div>
           </div>
         ) : null}
       </div>
@@ -232,7 +231,6 @@ function CallSession(props: {
       rightBadge: string | null;
       muted?: boolean;
       mirror?: boolean;
-      videoEnabled?: boolean;
     }> = [];
 
     t.push({
@@ -242,7 +240,6 @@ function CallSession(props: {
       rightBadge: myBadge,
       muted: true,
       mirror: true,
-      videoEnabled: call.camOn,
     });
 
     for (const r of call.remoteStreams) {
@@ -260,13 +257,11 @@ function CallSession(props: {
         stream: r.stream,
         label,
         rightBadge: badge || null,
-        videoEnabled: Boolean(p?.camOn),
       });
     }
 
     return t;
   }, [
-    call.camOn,
     call.localStream,
     call.peerId,
     call.remoteStreams,
@@ -403,7 +398,6 @@ function CallSession(props: {
               rightBadge={t.rightBadge}
               muted={t.muted}
               mirror={t.mirror}
-              videoEnabled={t.videoEnabled}
             />
           ))}
         </div>

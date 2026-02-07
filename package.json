@@ -4,7 +4,10 @@
   "private": true,
   "scripts": {
     "dev": "next dev --webpack",
+    "dev:web": "next dev --webpack",
+    "dev:realtime": "npm --prefix services/realtime run dev",
     "build": "next build --webpack",
+    "build:realtime": "npm --prefix services/realtime run build",
     "start": "next start",
     "lint": "eslint"
   },
@@ -13,7 +16,11 @@
     "next": "16.1.6",
     "react": "19.2.3",
     "react-dom": "19.2.3",
-    "react-youtube": "^10.1.0"
+    "react-youtube": "^10.1.0",
+    "livekit-client": "^2.17.1",
+    "socket.io-client": "^4.8.1",
+    "socket.io-msgpack-parser": "^3.0.2",
+    "zustand": "^5.0.8"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
