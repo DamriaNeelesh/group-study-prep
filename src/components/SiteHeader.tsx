@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 
 import {
   extractRoomIdFromInput,
@@ -12,7 +12,7 @@ import {
 function LogoMark() {
   return (
     <div className="flex items-center gap-2">
-      <div className="rounded-lg bg-[#4d4d4d] px-3 py-2 text-sm font-extrabold tracking-tight text-white">
+      <div className="rounded-lg bg-[var(--primary)] px-3 py-2 text-sm font-extrabold tracking-tight text-white shadow-[0_10px_30px_rgba(0,0,0,0.14)]">
         Study<span className="text-[var(--accent)]">Room</span>
       </div>
       <svg
@@ -54,6 +54,37 @@ export function SiteHeader(props: {
   const trimmed = q.trim();
   const canGo = trimmed.length > 0;
 
+  const handleJoin = useCallback(() => {
+    const input = q.trim();
+    if (!input) return;
+
+    const id = extractRoomIdFromInput(input);
+    if (id) {
+      setJoinError(null);
+      router.push(`/room/${id}`);
+      setQ("");
+      return;
+    }
+
+    const userId = props.userId?.toLowerCase() ?? null;
+    if (
+      looksLikeShortRoomCode(input) &&
+      userId &&
+      userId.startsWith(input.toLowerCase())
+    ) {
+      setJoinError(null);
+      router.push(`/room/${userId}`);
+      setQ("");
+      return;
+    }
+
+    setJoinError(
+      looksLikeShortRoomCode(input)
+        ? "That looks like a short code (first 8 chars). Please paste the full Room ID (UUID) or the full room link."
+        : "Paste a full room link or UUID.",
+    );
+  }, [props.userId, q, router]);
+
   async function copyUserId() {
     const userId = props.userId;
     if (!userId) return;
@@ -65,26 +96,13 @@ export function SiteHeader(props: {
   }
 
   const rightCtaLabel = useMemo(() => {
-    if (!props.userId) return "Login/Register";
-    if (props.isGuest) return "Upgrade with Google";
+    if (!props.userId) return "Continue with Google";
+    if (props.isGuest) return "Continue with Google";
     return "Sign out";
   }, [props.isGuest, props.userId]);
 
   return (
     <div className="sticky top-0 z-50">
-      <div className="bg-[var(--surface-2)]">
-        <div className="nt-container flex items-center justify-end gap-4 py-2 text-xs font-semibold text-[#2b2b2b]">
-          <a
-            className="hover:underline"
-            href="https://nextjs.org/docs"
-            target="_blank"
-            rel="noreferrer"
-          >
-            Help & Support
-          </a>
-        </div>
-      </div>
-
       <div className="nt-nav">
         <div className="nt-container flex items-center gap-4 py-3">
           <Link href="/" className="shrink-0">
@@ -96,27 +114,7 @@ export function SiteHeader(props: {
             onSubmit={(e) => {
               e.preventDefault();
               if (!canGo) return;
-              const id = extractRoomIdFromInput(trimmed);
-              if (!id) {
-                if (
-                  looksLikeShortRoomCode(trimmed) &&
-                  props.userId?.toLowerCase().startsWith(trimmed.toLowerCase())
-                ) {
-                  setJoinError(null);
-                  router.push(`/room/${props.userId.toLowerCase()}`);
-                  setQ("");
-                  return;
-                }
-                setJoinError(
-                  looksLikeShortRoomCode(trimmed)
-                    ? "That looks like only the first 8 characters. Paste the full room UUID/link, or click your ID badge (top right) to copy the full Guest ID."
-                    : "Paste a full room link or UUID.",
-                );
-                 return;
-               }
-               setJoinError(null);
-               router.push(`/room/${id}`);
-               setQ("");
+              handleJoin();
             }}
           >
             <div className="flex w-full max-w-[560px] items-center overflow-hidden rounded-[10px] bg-[var(--surface-2)]">
@@ -183,17 +181,50 @@ export function SiteHeader(props: {
             </nav>
 
             {props.userId ? (
-              <button
-                type="button"
-                className="hidden rounded-full bg-white px-3 py-1 text-xs font-semibold text-[var(--foreground)] shadow-[0_1px_10px_rgba(0,0,0,0.06)] sm:inline"
-                title="Click to copy full Guest ID"
-                onClick={() => void copyUserId()}
-              >
-                <span className="font-mono">
-                  {props.userId.slice(0, 8)}...{props.userId.slice(-4)}
-                </span>
-                {props.isGuest ? <span className="ml-2 nt-badge">Guest</span> : null}
-              </button>
+              <>
+                <button
+                  type="button"
+                  className="hidden rounded-full bg-white px-3 py-1 text-xs font-semibold text-[var(--foreground)] shadow-[0_1px_10px_rgba(0,0,0,0.06)] sm:inline"
+                  title="Click to copy full Guest ID"
+                  onClick={() => void copyUserId()}
+                >
+                  <span className="font-mono">
+                    {props.userId.slice(0, 8)}...{props.userId.slice(-4)}
+                  </span>
+                  {props.isGuest ? (
+                    <span className="ml-2 nt-badge">Guest</span>
+                  ) : null}
+                </button>
+
+                <button
+                  type="button"
+                  className="nt-btn nt-btn-outline h-10 w-10 p-0 sm:hidden"
+                  title="Copy full Guest ID"
+                  onClick={() => void copyUserId()}
+                >
+                  <svg
+                    width="18"
+                    height="18"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    xmlns="http://www.w3.org/2000/svg"
+                    aria-hidden="true"
+                  >
+                    <path
+                      d="M9 9h10v10H9V9Z"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinejoin="round"
+                    />
+                    <path
+                      d="M5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                    />
+                  </svg>
+                </button>
+              </>
             ) : null}
 
             <button
@@ -220,27 +251,7 @@ export function SiteHeader(props: {
             onSubmit={(e) => {
               e.preventDefault();
               if (!canGo) return;
-              const id = extractRoomIdFromInput(trimmed);
-              if (!id) {
-                if (
-                  looksLikeShortRoomCode(trimmed) &&
-                  props.userId?.toLowerCase().startsWith(trimmed.toLowerCase())
-                ) {
-                  setJoinError(null);
-                  router.push(`/room/${props.userId.toLowerCase()}`);
-                  setQ("");
-                  return;
-                }
-                setJoinError(
-                  looksLikeShortRoomCode(trimmed)
-                    ? "That looks like only the first 8 characters. Paste the full room UUID/link, or click your ID badge (top right on desktop) to copy the full Guest ID."
-                    : "Paste a full room link or UUID.",
-                );
-                  return;
-                }
-              setJoinError(null);
-              router.push(`/room/${id}`);
-              setQ("");
+              handleJoin();
             }}
           >
             <input

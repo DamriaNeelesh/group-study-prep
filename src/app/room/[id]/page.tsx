@@ -35,7 +35,7 @@ export default function RoomPage() {
   }, [auth.user, room.presence]);
 
   return (
-    <div className="min-h-screen bg-[var(--background)]">
+    <div className="min-h-screen">
       <SiteHeader
         userId={auth.user?.id ?? null}
         isGuest={Boolean(auth.user?.is_anonymous)}
@@ -43,55 +43,71 @@ export default function RoomPage() {
         onSignOut={() => void auth.signOut()}
       />
 
-      <main className="nt-container py-10">
-        <header className="nt-card p-5">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div className="flex flex-col gap-1">
-              <div className="text-xs font-extrabold uppercase tracking-wide text-[var(--muted)]">
-                Room
+      <main className="nt-container pb-12 pt-8">
+        <header className="nt-card relative overflow-hidden p-6">
+          <div className="pointer-events-none absolute inset-0 opacity-60">
+            <div className="absolute -left-24 -top-24 h-64 w-64 rounded-full bg-[var(--accent)]/20 blur-3xl" />
+            <div className="absolute -right-24 -top-24 h-64 w-64 rounded-full bg-black/10 blur-3xl" />
+          </div>
+
+          <div className="relative flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="rounded-full bg-[var(--surface-2)] px-3 py-1 text-xs font-extrabold text-[var(--foreground)]">
+                  Room
+                </span>
+                <span className="rounded-full bg-[var(--accent-soft)] px-3 py-1 text-xs font-extrabold text-[var(--accent-2)]">
+                  Online: <span className="font-mono">{room.presence.length}</span>
+                </span>
               </div>
-              <div className="text-lg font-extrabold tracking-tight text-[var(--foreground)]">
-                <span className="font-mono break-all">{rawId}</span>
+
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <div className="rounded-[12px] border border-black/5 bg-white px-3 py-2 text-sm font-extrabold text-[var(--foreground)]">
+                  <span className="font-mono break-all">{rawId}</span>
+                </div>
+                <button
+                  className="nt-btn nt-btn-outline h-10 px-4"
+                  onClick={() => {
+                    void (async () => {
+                      if (!roomId) return;
+                      try {
+                        await navigator.clipboard?.writeText(roomId);
+                        setUiToast("Room ID copied");
+                      } catch {
+                        setUiToast("Copy failed");
+                      }
+                    })();
+                  }}
+                  disabled={!roomId}
+                  title="Copy Room ID (UUID)"
+                >
+                  Copy ID
+                </button>
+                <button
+                  className="nt-btn nt-btn-outline h-10 px-4"
+                  onClick={() => {
+                    void (async () => {
+                      try {
+                        await navigator.clipboard?.writeText(location.href);
+                        setUiToast("Link copied");
+                      } catch {
+                        setUiToast("Copy failed");
+                      }
+                    })();
+                  }}
+                  disabled={!roomId}
+                  title="Copy full room link"
+                >
+                  Copy Link
+                </button>
               </div>
-              <div className="text-sm font-semibold text-[var(--muted)]">
-                Online: <span className="font-mono">{room.presence.length}</span>
+
+              <div className="mt-3 text-xs font-semibold text-[var(--muted)]">
+                Tip: share the link in WhatsApp or your class group, then everyone pastes it on Home to join.
               </div>
             </div>
 
             <div className="flex flex-wrap items-center gap-2">
-              <button
-                className="nt-btn nt-btn-outline"
-                onClick={() => {
-                  void (async () => {
-                    try {
-                      await navigator.clipboard?.writeText(location.href);
-                      setUiToast("Link copied");
-                    } catch {
-                      setUiToast("Copy failed");
-                    }
-                  })();
-                }}
-                disabled={!roomId}
-              >
-                Copy Link
-              </button>
-              <button
-                className="nt-btn nt-btn-outline"
-                onClick={() => {
-                  void (async () => {
-                    if (!roomId) return;
-                    try {
-                      await navigator.clipboard?.writeText(roomId);
-                      setUiToast("Room ID copied");
-                    } catch {
-                      setUiToast("Copy failed");
-                    }
-                  })();
-                }}
-                disabled={!roomId}
-              >
-                Copy ID
-              </button>
               <button
                 className="nt-btn nt-btn-outline"
                 onClick={() => {
@@ -101,12 +117,14 @@ export default function RoomPage() {
                   })();
                 }}
                 disabled={!room.isReady}
+                title="Reload room state from DB"
               >
                 Resync
               </button>
               <button
                 className="nt-btn nt-btn-primary"
                 onClick={() => router.push("/")}
+                title="Go back to Home"
               >
                 Home
               </button>

@@ -14,6 +14,16 @@ function formatAuthErrorMessage(message: string) {
       "Or sign in with Google/email instead.",
     ].join(" ");
   }
+  if (
+    m.includes("identity_already_exists") ||
+    m.includes("identity is already linked to another user")
+  ) {
+    return [
+      "This Google account is already linked to another user.",
+      'To use it here, click "Sign out" and then sign in with Google again (you will use the existing account).',
+      'If you want to keep your current Guest ID, use a different Google account for "Upgrade".',
+    ].join(" ");
+  }
   if (m.includes("manual linking") && m.includes("disabled")) {
     return [
       "Manual identity linking is disabled in your Supabase project.",
@@ -45,6 +55,32 @@ export function useSupabaseAuth() {
     error: missingEnvError,
     displayName: "",
   });
+
+  // If an OAuth flow fails, Supabase returns the error in the URL (query or hash).
+  // Surface it nicely and clean up the URL so users don't get stuck with noisy params.
+  useEffect(() => {
+    try {
+      const url = new URL(location.href);
+      const hashParams = new URLSearchParams(url.hash.startsWith("#") ? url.hash.slice(1) : url.hash);
+      const error = url.searchParams.get("error") || hashParams.get("error");
+      const errorCode =
+        url.searchParams.get("error_code") || hashParams.get("error_code");
+      const errorDescription =
+        url.searchParams.get("error_description") ||
+        hashParams.get("error_description");
+
+      if (error || errorCode || errorDescription) {
+        const msg =
+          errorCode === "identity_already_exists"
+            ? "identity_already_exists"
+            : errorDescription || errorCode || error || "OAuth error";
+        setState((s) => ({ ...s, error: formatAuthErrorMessage(msg) }));
+        history.replaceState({}, "", url.pathname);
+      }
+    } catch {
+      // ignore
+    }
+  }, []);
 
   const refreshProfile = useCallback(
     async (user: User) => {
@@ -157,18 +193,11 @@ export function useSupabaseAuth() {
     if (!supabase) return;
     setState((s) => ({ ...s, error: null }));
 
-    // If the user is currently anonymous, prefer linking Google so the user ID stays the same.
-    const isAnonymous = Boolean(state.user?.is_anonymous);
     const redirectTo = `${location.origin}/`;
-    const res = isAnonymous
-      ? await supabase.auth.linkIdentity({
-          provider: "google",
-          options: { redirectTo },
-        })
-      : await supabase.auth.signInWithOAuth({
-          provider: "google",
-          options: { redirectTo },
-        });
+    const res = await supabase.auth.signInWithOAuth({
+      provider: "google",
+      options: { redirectTo },
+    });
 
     if (res.error) {
       setState((s) => ({
@@ -179,7 +208,7 @@ export function useSupabaseAuth() {
     }
 
     if (res.data?.url) window.location.href = res.data.url;
-  }, [state.user?.is_anonymous, supabase]);
+  }, [supabase]);
 
   const setDisplayName = useCallback(
     async (displayName: string) => {

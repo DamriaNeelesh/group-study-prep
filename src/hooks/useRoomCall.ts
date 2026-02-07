@@ -45,6 +45,25 @@ type State = {
   remoteStreams: RemoteStream[];
 };
 
+const DEFAULT_ICE_SERVERS: RTCIceServer[] = [
+  { urls: "stun:stun.l.google.com:19302" },
+  { urls: "stun:stun1.l.google.com:19302" },
+];
+
+function iceServersFromEnv(): RTCIceServer[] {
+  const raw = process.env.NEXT_PUBLIC_WEBRTC_ICE_SERVERS;
+  if (!raw) return DEFAULT_ICE_SERVERS;
+
+  try {
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed) && parsed.length > 0) return parsed as RTCIceServer[];
+  } catch {
+    // ignore
+  }
+
+  return DEFAULT_ICE_SERVERS;
+}
+
 function participantsFromState(state: RealtimePresenceState<CallPresenceMeta>) {
   const users: CallParticipant[] = [];
   for (const [key, metas] of Object.entries(state)) {
@@ -309,10 +328,7 @@ export function useRoomCall(args: {
       const localPeerId = localPeerIdRef.current;
 
       const pc = new RTCPeerConnection({
-        iceServers: [
-          { urls: "stun:stun.l.google.com:19302" },
-          { urls: "stun:stun1.l.google.com:19302" },
-        ],
+        iceServers: iceServersFromEnv(),
       });
 
       const remoteStream = new MediaStream();
@@ -346,7 +362,7 @@ export function useRoomCall(args: {
             ...prev,
             error:
               prev.error ??
-              "Call connection failed. If devices are on different networks, you may need a TURN server for reliable WebRTC.",
+              "Call connection failed. If devices are on different networks, configure a TURN server (NEXT_PUBLIC_WEBRTC_ICE_SERVERS) for reliable WebRTC.",
           }));
           closePeer(remotePeerId);
           return;
