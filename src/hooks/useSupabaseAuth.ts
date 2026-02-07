@@ -14,6 +14,14 @@ function formatAuthErrorMessage(message: string) {
       "Or sign in with Google/email instead.",
     ].join(" ");
   }
+  if (m.includes("manual linking") && m.includes("disabled")) {
+    return [
+      "Manual identity linking is disabled in your Supabase project.",
+      'This app uses "Upgrade with Google" to link Google to the current Guest user (so the user ID stays the same).',
+      "Enable it in Supabase Dashboard: Authentication -> Settings -> Identity Linking -> Enable Manual Linking (beta).",
+      "If you don't need to keep the same Guest ID, change the app to use Google sign-in (OAuth) instead of linking.",
+    ].join(" ");
+  }
   return message;
 }
 
