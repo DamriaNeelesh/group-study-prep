@@ -45,6 +45,7 @@ Open `http://localhost:3000`:
 5. Set a YouTube video, then Play/Pause/Seek in one window and verify the other window follows.
 6. Click "Raise Hand" and verify the toast + presence badge.
 7. In the Room page, test "Meet":
+   - Click "Join Meet"
    - Click "Camera On" / "Mic On" in both windows.
    - Verify you can see/hear the other participant.
 

@@ -4,6 +4,12 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { type CallParticipant, useRoomCall } from "@/hooks/useRoomCall";
 
+function shortId(id: string) {
+  const trimmed = id.trim();
+  if (trimmed.length <= 14) return trimmed;
+  return `${trimmed.slice(0, 8)}...${trimmed.slice(-4)}`;
+}
+
 function StreamTile(props: {
   stream: MediaStream | null;
   label: string;
@@ -98,10 +104,61 @@ function StreamTile(props: {
   );
 }
 
-export function RoomCall(props: {
+function CallPreview(props: {
   roomId: string;
   userId: string | null;
   displayName: string;
+  onJoin: () => void;
+}) {
+  const [isSecure] = useState(() => {
+    // `getUserMedia` needs HTTPS (or localhost). Avoid user confusion with a heads-up.
+    try {
+      return Boolean(window.isSecureContext);
+    } catch {
+      return true;
+    }
+  });
+
+  return (
+    <div className="nt-card p-4">
+      <div className="flex items-center justify-between gap-3">
+        <div className="text-sm font-extrabold text-[var(--foreground)]">Meet</div>
+        <span className="nt-badge">Beta</span>
+      </div>
+
+      <div className="mt-2 text-xs font-semibold text-[var(--muted)]">
+        Camera + mic inside this room. Join only if you need it.
+      </div>
+
+      {!isSecure ? (
+        <div className="mt-3 rounded-[10px] border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-900">
+          Camera/mic requires HTTPS (or localhost). If you&apos;re opening this from
+          a phone on the same WiFi, use an HTTPS URL.
+        </div>
+      ) : null}
+
+      <div className="mt-3 flex items-center gap-2">
+        <button
+          className="nt-btn nt-btn-accent h-11 px-4"
+          onClick={props.onJoin}
+          disabled={!props.userId}
+          title={props.userId ? "Join the meet" : "Signing in..."}
+        >
+          Join Meet
+        </button>
+        <div className="text-xs font-semibold text-[var(--muted)]">
+          Best for small groups. For large rooms, use audio only or add a TURN server.
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function CallSession(props: {
+  roomId: string;
+  userId: string | null;
+  displayName: string;
+  onLeave: () => void;
 }) {
   const call = useRoomCall({
     roomId: props.roomId,
@@ -110,15 +167,63 @@ export function RoomCall(props: {
   });
 
   const participants = call.participants;
-  const participantsById = useMemo(() => {
+  const participantsByPeerId = useMemo(() => {
     const m = new Map<string, CallParticipant>();
-    for (const p of participants) m.set(p.userId, p);
+    for (const p of participants) m.set(p.peerId, p);
     return m;
   }, [participants]);
 
-  const myLabel =
-    props.displayName?.trim() ||
-    (props.userId ? `${props.userId.slice(0, 8)}...${props.userId.slice(-4)}` : "You");
+  const myLabel = props.displayName?.trim() || (props.userId ? shortId(props.userId) : "You");
+  const myBadge =
+    [call.micOn ? "Mic" : null, call.camOn ? "Cam" : null].filter(Boolean).join(" ") ||
+    null;
+
+  const tiles = useMemo(() => {
+    const t: Array<{
+      key: string;
+      stream: MediaStream | null;
+      label: string;
+      rightBadge: string | null;
+      muted?: boolean;
+      mirror?: boolean;
+    }> = [];
+
+    t.push({
+      key: `local:${call.peerId}`,
+      stream: call.localStream,
+      label: `${myLabel} (You)`,
+      rightBadge: myBadge,
+      muted: true,
+      mirror: true,
+    });
+
+    for (const r of call.remoteStreams) {
+      const p = participantsByPeerId.get(r.peerId);
+      const label = p?.displayName?.trim()
+        ? p.displayName
+        : p?.userId
+          ? shortId(p.userId)
+          : shortId(r.peerId);
+      const badge = [p?.micOn ? "Mic" : null, p?.camOn ? "Cam" : null]
+        .filter(Boolean)
+        .join(" ");
+      t.push({
+        key: r.peerId,
+        stream: r.stream,
+        label,
+        rightBadge: badge || null,
+      });
+    }
+
+    return t;
+  }, [
+    call.localStream,
+    call.peerId,
+    call.remoteStreams,
+    myBadge,
+    myLabel,
+    participantsByPeerId,
+  ]);
 
   return (
     <div className="nt-card p-4">
@@ -153,6 +258,13 @@ export function RoomCall(props: {
         >
           {call.micOn ? "Mic On" : "Mic Off"}
         </button>
+        <button
+          className="nt-btn nt-btn-outline ml-auto"
+          onClick={props.onLeave}
+          title="Leave meet"
+        >
+          Leave
+        </button>
       </div>
 
       {call.error ? (
@@ -162,50 +274,52 @@ export function RoomCall(props: {
       ) : null}
 
       <div className="mt-3">
-        <StreamTile
-          stream={call.localStream}
-          label={`${myLabel} (You)`}
-          muted
-          mirror
-          rightBadge={[
-            call.micOn ? "Mic" : null,
-            call.camOn ? "Cam" : null,
-          ]
-            .filter(Boolean)
-            .join(" ") || null}
-        />
-      </div>
-
-      <div className="mt-3">
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+          {tiles.map((t) => (
+            <StreamTile
+              key={t.key}
+              stream={t.stream}
+              label={t.label}
+              rightBadge={t.rightBadge}
+              muted={t.muted}
+              mirror={t.mirror}
+            />
+          ))}
+        </div>
         {call.remoteStreams.length === 0 ? (
-          <div className="text-xs font-semibold text-[var(--muted)]">
-            No one else in the call yet.
+          <div className="mt-2 text-xs font-semibold text-[var(--muted)]">
+            No one else has joined yet.
           </div>
-        ) : (
-          <div className="grid grid-cols-2 gap-2">
-            {call.remoteStreams.map((r) => {
-              const p = participantsById.get(r.userId);
-              const label = p?.displayName?.trim()
-                ? p.displayName
-                : `${r.userId.slice(0, 8)}...${r.userId.slice(-4)}`;
-              const badge = [
-                p?.micOn ? "Mic" : null,
-                p?.camOn ? "Cam" : null,
-              ]
-                .filter(Boolean)
-                .join(" ");
-              return (
-                <StreamTile
-                  key={r.userId}
-                  stream={r.stream}
-                  label={label}
-                  rightBadge={badge || null}
-                />
-              );
-            })}
-          </div>
-        )}
+        ) : null}
       </div>
     </div>
+  );
+}
+
+export function RoomCall(props: {
+  roomId: string;
+  userId: string | null;
+  displayName: string;
+}) {
+  const [joined, setJoined] = useState(false);
+
+  if (!joined) {
+    return (
+      <CallPreview
+        roomId={props.roomId}
+        userId={props.userId}
+        displayName={props.displayName}
+        onJoin={() => setJoined(true)}
+      />
+    );
+  }
+
+  return (
+    <CallSession
+      roomId={props.roomId}
+      userId={props.userId}
+      displayName={props.displayName}
+      onLeave={() => setJoined(false)}
+    />
   );
 }

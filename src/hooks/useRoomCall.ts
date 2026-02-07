@@ -9,6 +9,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 
 export type CallPresenceMeta = {
+  peerId: string;
   userId: string;
   displayName: string | null;
   camOn: boolean;
@@ -20,7 +21,7 @@ export type CallParticipant = CallPresenceMeta & {
 };
 
 type RemoteStream = {
-  userId: string;
+  peerId: string;
   stream: MediaStream;
 };
 
@@ -49,14 +50,19 @@ function participantsFromState(state: RealtimePresenceState<CallPresenceMeta>) {
   for (const [key, metas] of Object.entries(state)) {
     const meta = metas[0];
     users.push({
-      userId: meta?.userId ?? key,
+      peerId: meta?.peerId ?? key,
+      userId: meta?.userId ?? "",
       displayName: meta?.displayName ?? null,
       camOn: Boolean(meta?.camOn),
       micOn: Boolean(meta?.micOn),
       connections: metas.length,
     });
   }
-  users.sort((a, b) => a.userId.localeCompare(b.userId));
+  users.sort((a, b) => {
+    const ak = (a.displayName || a.userId || a.peerId).toLowerCase();
+    const bk = (b.displayName || b.userId || b.peerId).toLowerCase();
+    return ak.localeCompare(bk);
+  });
   return users;
 }
 
@@ -72,6 +78,38 @@ function toCandidateInit(c: RTCIceCandidate) {
     sdpMLineIndex: c.sdpMLineIndex ?? null,
     usernameFragment: c.usernameFragment ?? null,
   } satisfies RTCIceCandidateInit;
+}
+
+function createPeerId() {
+  try {
+    return crypto.randomUUID();
+  } catch {
+    return `peer_${Date.now().toString(16)}_${Math.random().toString(16).slice(2)}`;
+  }
+}
+
+function formatGetUserMediaError(kind: "camera" | "microphone", e: unknown) {
+  const err = e as { name?: string; message?: string } | null;
+  const name = String(err?.name ?? "");
+
+  if (name === "NotAllowedError" || name === "PermissionDeniedError") {
+    return `Permission denied. Allow ${kind} access in your browser settings and try again.`;
+  }
+  if (name === "NotFoundError" || name === "DevicesNotFoundError") {
+    return `No ${kind} device found.`;
+  }
+  if (name === "NotReadableError" || name === "TrackStartError") {
+    return `Your ${kind} is busy or blocked by another app. Close other apps using it and try again.`;
+  }
+  if (name === "OverconstrainedError" || name === "ConstraintNotSatisfiedError") {
+    return `Your device can't satisfy the requested ${kind} constraints. Try a different camera/mic.`;
+  }
+  if (name === "SecurityError") {
+    return `${kind[0]?.toUpperCase()}${kind.slice(1)} requires HTTPS (or localhost).`;
+  }
+
+  const message = err?.message ? String(err.message) : "";
+  return message || `Failed to access ${kind}.`;
 }
 
 export function useRoomCall(args: {
@@ -95,6 +133,7 @@ export function useRoomCall(args: {
     remoteStreams: [],
   });
 
+  const localPeerIdRef = useRef<string>(createPeerId());
   const channelRef = useRef<RealtimeChannel | null>(null);
   const peersRef = useRef<Map<string, Peer>>(new Map());
   const localStreamRef = useRef<MediaStream | null>(null);
@@ -115,10 +154,10 @@ export function useRoomCall(args: {
     await channel.track(next);
   }, []);
 
-  const closePeer = useCallback((remoteUserId: string) => {
-    const peer = peersRef.current.get(remoteUserId);
+  const closePeer = useCallback((remotePeerId: string) => {
+    const peer = peersRef.current.get(remotePeerId);
     if (!peer) return;
-    peersRef.current.delete(remoteUserId);
+    peersRef.current.delete(remotePeerId);
     try {
       peer.pc.onicecandidate = null;
       peer.pc.ontrack = null;
@@ -128,7 +167,7 @@ export function useRoomCall(args: {
     }
     setState((s) => ({
       ...s,
-      remoteStreams: s.remoteStreams.filter((r) => r.userId !== remoteUserId),
+      remoteStreams: s.remoteStreams.filter((r) => r.peerId !== remotePeerId),
     }));
   }, []);
 
@@ -201,6 +240,12 @@ export function useRoomCall(args: {
 
   const enableCamera = useCallback(async () => {
     try {
+      if (!navigator.mediaDevices?.getUserMedia) {
+        throw new Error("Your browser does not support camera access.");
+      }
+      if (typeof window !== "undefined" && !window.isSecureContext) {
+        throw new Error("Camera requires HTTPS (or localhost).");
+      }
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { facingMode: "user" },
         audio: false,
@@ -212,7 +257,7 @@ export function useRoomCall(args: {
     } catch (e: unknown) {
       setState((s) => ({
         ...s,
-        error: e instanceof Error ? e.message : String(e),
+        error: formatGetUserMediaError("camera", e),
       }));
     }
   }, [setLocalVideoTrack, updatePresenceMeta]);
@@ -225,6 +270,12 @@ export function useRoomCall(args: {
 
   const enableMic = useCallback(async () => {
     try {
+      if (!navigator.mediaDevices?.getUserMedia) {
+        throw new Error("Your browser does not support microphone access.");
+      }
+      if (typeof window !== "undefined" && !window.isSecureContext) {
+        throw new Error("Microphone requires HTTPS (or localhost).");
+      }
       const stream = await navigator.mediaDevices.getUserMedia({
         video: false,
         audio: {
@@ -240,7 +291,7 @@ export function useRoomCall(args: {
     } catch (e: unknown) {
       setState((s) => ({
         ...s,
-        error: e instanceof Error ? e.message : String(e),
+        error: formatGetUserMediaError("microphone", e),
       }));
     }
   }, [setLocalAudioTrack, updatePresenceMeta]);
@@ -252,9 +303,10 @@ export function useRoomCall(args: {
   }, [setLocalAudioTrack, updatePresenceMeta]);
 
   const createPeer = useCallback(
-    async (remoteUserId: string) => {
+    async (remotePeerId: string) => {
       const localUserId = args.userId;
       if (!localUserId) return null;
+      const localPeerId = localPeerIdRef.current;
 
       const pc = new RTCPeerConnection({
         iceServers: [
@@ -276,7 +328,7 @@ export function useRoomCall(args: {
         pendingCandidates: [],
         remoteDescSet: false,
       };
-      peersRef.current.set(remoteUserId, peer);
+      peersRef.current.set(remotePeerId, peer);
 
       pc.ontrack = (ev) => {
         // Some browsers provide streams; some only provide tracks. Prefer track-based.
@@ -289,7 +341,7 @@ export function useRoomCall(args: {
       pc.onconnectionstatechange = () => {
         const s = pc.connectionState;
         if (s === "failed" || s === "disconnected" || s === "closed") {
-          closePeer(remoteUserId);
+          closePeer(remotePeerId);
         }
       };
 
@@ -297,8 +349,9 @@ export function useRoomCall(args: {
         if (!ev.candidate) return;
         void send("webrtc:candidate", {
           roomId: args.roomId,
-          from: localUserId,
-          to: remoteUserId,
+          fromPeerId: localPeerId,
+          toPeerId: remotePeerId,
+          fromUserId: localUserId,
           candidate: toCandidateInit(ev.candidate),
         });
       };
@@ -319,9 +372,9 @@ export function useRoomCall(args: {
       }
 
       setState((s) => {
-        const next = [...s.remoteStreams.filter((r) => r.userId !== remoteUserId)];
-        next.push({ userId: remoteUserId, stream: remoteStream });
-        next.sort((x, y) => x.userId.localeCompare(y.userId));
+        const next = [...s.remoteStreams.filter((r) => r.peerId !== remotePeerId)];
+        next.push({ peerId: remotePeerId, stream: remoteStream });
+        next.sort((x, y) => x.peerId.localeCompare(y.peerId));
         return { ...s, remoteStreams: next };
       });
 
@@ -331,10 +384,10 @@ export function useRoomCall(args: {
   );
 
   const ensurePeer = useCallback(
-    async (remoteUserId: string) => {
-      const existing = peersRef.current.get(remoteUserId);
+    async (remotePeerId: string) => {
+      const existing = peersRef.current.get(remotePeerId);
       if (existing) return existing;
-      return await createPeer(remoteUserId);
+      return await createPeer(remotePeerId);
     },
     [createPeer],
   );
@@ -352,10 +405,11 @@ export function useRoomCall(args: {
   }, []);
 
   const startOffer = useCallback(
-    async (remoteUserId: string) => {
+    async (remotePeerId: string) => {
       const localUserId = args.userId;
       if (!localUserId) return;
-      const peer = await ensurePeer(remoteUserId);
+      const localPeerId = localPeerIdRef.current;
+      const peer = await ensurePeer(remotePeerId);
       if (!peer) return;
       try {
         const offer = await peer.pc.createOffer();
@@ -364,8 +418,9 @@ export function useRoomCall(args: {
         if (!sdp) return;
         await send("webrtc:offer", {
           roomId: args.roomId,
-          from: localUserId,
-          to: remoteUserId,
+          fromPeerId: localPeerId,
+          toPeerId: remotePeerId,
+          fromUserId: localUserId,
           sdp,
         });
       } catch (e: unknown) {
@@ -384,18 +439,20 @@ export function useRoomCall(args: {
     const userId = args.userId;
     if (!roomId || !userId) return;
 
+    const localPeerId = localPeerIdRef.current;
     let ignore = false;
     const peers = peersRef.current;
 
     const channel = supabase.channel(`call:${roomId}`, {
       config: {
         broadcast: { self: false },
-        presence: { key: userId },
+        presence: { key: localPeerId },
       },
     });
     channelRef.current = channel;
 
     presenceMetaRef.current = {
+      peerId: localPeerId,
       userId,
       displayName: args.displayName || null,
       camOn: false,
@@ -423,14 +480,14 @@ export function useRoomCall(args: {
       })
       .on("broadcast", { event: "webrtc:offer" }, async ({ payload }) => {
         if (ignore) return;
-        const to = String(payload?.to ?? "");
-        if (to !== userId) return;
-        const from = String(payload?.from ?? "");
-        if (!from) return;
+        const toPeerId = String(payload?.toPeerId ?? "");
+        if (toPeerId !== localPeerId) return;
+        const fromPeerId = String(payload?.fromPeerId ?? "");
+        if (!fromPeerId) return;
         const sdp = payload?.sdp as RTCSessionDescriptionInit | undefined;
         if (!sdp?.type || !sdp?.sdp) return;
 
-        const peer = await ensurePeer(from);
+        const peer = await ensurePeer(fromPeerId);
         if (!peer) return;
         try {
           await peer.pc.setRemoteDescription(new RTCSessionDescription(sdp));
@@ -443,8 +500,9 @@ export function useRoomCall(args: {
           if (!localDesc) return;
           await send("webrtc:answer", {
             roomId,
-            from: userId,
-            to: from,
+            fromPeerId: localPeerId,
+            toPeerId: fromPeerId,
+            fromUserId: userId,
             sdp: localDesc,
           });
         } catch (e: unknown) {
@@ -456,14 +514,14 @@ export function useRoomCall(args: {
       })
       .on("broadcast", { event: "webrtc:answer" }, async ({ payload }) => {
         if (ignore) return;
-        const to = String(payload?.to ?? "");
-        if (to !== userId) return;
-        const from = String(payload?.from ?? "");
-        if (!from) return;
+        const toPeerId = String(payload?.toPeerId ?? "");
+        if (toPeerId !== localPeerId) return;
+        const fromPeerId = String(payload?.fromPeerId ?? "");
+        if (!fromPeerId) return;
         const sdp = payload?.sdp as RTCSessionDescriptionInit | undefined;
         if (!sdp?.type || !sdp?.sdp) return;
 
-        const peer = await ensurePeer(from);
+        const peer = await ensurePeer(fromPeerId);
         if (!peer) return;
         try {
           await peer.pc.setRemoteDescription(new RTCSessionDescription(sdp));
@@ -478,14 +536,14 @@ export function useRoomCall(args: {
       })
       .on("broadcast", { event: "webrtc:candidate" }, async ({ payload }) => {
         if (ignore) return;
-        const to = String(payload?.to ?? "");
-        if (to !== userId) return;
-        const from = String(payload?.from ?? "");
-        if (!from) return;
+        const toPeerId = String(payload?.toPeerId ?? "");
+        if (toPeerId !== localPeerId) return;
+        const fromPeerId = String(payload?.fromPeerId ?? "");
+        if (!fromPeerId) return;
         const candidate = payload?.candidate as RTCIceCandidateInit | undefined;
         if (!candidate?.candidate) return;
 
-        const peer = await ensurePeer(from);
+        const peer = await ensurePeer(fromPeerId);
         if (!peer) return;
 
         if (!peer.remoteDescSet) {
@@ -564,19 +622,19 @@ export function useRoomCall(args: {
 
   // When call presence changes, ensure we have peers for everyone currently in the call channel.
   useEffect(() => {
-    const localUserId = args.userId;
-    if (!state.isReady || !localUserId) return;
+    const localPeerId = localPeerIdRef.current;
+    if (!state.isReady) return;
 
     const remotes = state.participants
-      .map((p) => p.userId)
-      .filter((id) => id && id !== localUserId);
+      .map((p) => p.peerId)
+      .filter((id) => id && id !== localPeerId);
 
-    for (const remoteUserId of remotes) {
-      if (!peersRef.current.has(remoteUserId)) {
-        void ensurePeer(remoteUserId).then((peer) => {
+    for (const remotePeerId of remotes) {
+      if (!peersRef.current.has(remotePeerId)) {
+        void ensurePeer(remotePeerId).then((peer) => {
           if (!peer) return;
-          if (isOfferInitiator(localUserId, remoteUserId)) {
-            void startOffer(remoteUserId);
+          if (isOfferInitiator(localPeerId, remotePeerId)) {
+            void startOffer(remotePeerId);
           }
         });
       }
@@ -585,10 +643,11 @@ export function useRoomCall(args: {
     for (const existing of Array.from(peersRef.current.keys())) {
       if (!remotes.includes(existing)) closePeer(existing);
     }
-  }, [args.userId, closePeer, ensurePeer, startOffer, state.isReady, state.participants]);
+  }, [closePeer, ensurePeer, startOffer, state.isReady, state.participants]);
 
   return {
     ...state,
+    peerId: localPeerIdRef.current,
     enableCamera,
     disableCamera,
     enableMic,
