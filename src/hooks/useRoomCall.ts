@@ -20,6 +20,17 @@ export type CallParticipant = CallPresenceMeta & {
   connections: number;
 };
 
+export type CallPeerDebug = {
+  peerId: string;
+  connectionState: RTCPeerConnectionState;
+  signalingState: RTCSignalingState;
+  iceConnectionState: RTCIceConnectionState;
+  outboundAudioBytes: number;
+  outboundVideoBytes: number;
+  inboundAudioBytes: number;
+  inboundVideoBytes: number;
+};
+
 type RemoteStream = {
   peerId: string;
   stream: MediaStream;
@@ -45,6 +56,7 @@ type State = {
   micOn: boolean;
   localStream: MediaStream | null;
   remoteStreams: RemoteStream[];
+  debugPeers: CallPeerDebug[];
 };
 
 const DEFAULT_ICE_SERVERS: RTCIceServer[] = [
@@ -152,6 +164,7 @@ export function useRoomCall(args: {
     micOn: false,
     localStream: null,
     remoteStreams: [],
+    debugPeers: [],
   });
 
   const localPeerIdRef = useRef<string>(createPeerId());
@@ -160,6 +173,68 @@ export function useRoomCall(args: {
   const localStreamRef = useRef<MediaStream | null>(null);
   const presenceMetaRef = useRef<CallPresenceMeta | null>(null);
   const startOfferRef = useRef<(remotePeerId: string) => void>(() => void 0);
+  const dummyVideoRef = useRef<{
+    canvas: HTMLCanvasElement;
+    stream: MediaStream;
+    track: MediaStreamTrack;
+  } | null>(null);
+
+  const getOrCreateDummyVideoTrack = useCallback((): MediaStreamTrack | null => {
+    // Client-only: keep all DOM usage inside callbacks/effects.
+    if (typeof document === "undefined") return null;
+
+    const existing = dummyVideoRef.current?.track ?? null;
+    if (existing && existing.readyState !== "ended") return existing;
+
+    const canvas = document.createElement("canvas");
+    canvas.width = 320;
+    canvas.height = 180;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return null;
+
+    // A visible placeholder pattern so we can tell "dummy video" vs real camera.
+    const g = ctx.createLinearGradient(0, 0, canvas.width, canvas.height);
+    g.addColorStop(0, "#0b1220");
+    g.addColorStop(1, "#0f3d2e");
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    ctx.fillStyle = "rgba(255,255,255,0.10)";
+    for (let x = 0; x < canvas.width; x += 18) {
+      ctx.fillRect(x, 0, 2, canvas.height);
+    }
+    for (let y = 0; y < canvas.height; y += 18) {
+      ctx.fillRect(0, y, canvas.width, 2);
+    }
+
+    ctx.fillStyle = "rgba(255,255,255,0.85)";
+    ctx.font = "bold 18px system-ui, -apple-system, Segoe UI, Roboto, Arial";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText("CAMERA OFF", canvas.width / 2, canvas.height / 2);
+
+    const stream = canvas.captureStream?.(1);
+    const track = stream?.getVideoTracks?.()[0] ?? null;
+    if (!track) return null;
+
+    dummyVideoRef.current = { canvas, stream, track };
+    return track;
+  }, []);
+
+  const ensureLocalStream = useCallback(() => {
+    const current = localStreamRef.current ?? new MediaStream();
+    localStreamRef.current = current;
+
+    // Keep a dummy video track in the stream so SDP always has a video sender.
+    const dummy = getOrCreateDummyVideoTrack();
+    if (dummy) {
+      const hasDummy = current.getVideoTracks().some((t) => t === dummy);
+      const hasAnyVideo = current.getVideoTracks().length > 0;
+      if (!hasAnyVideo && !hasDummy) current.addTrack(dummy);
+    }
+
+    return current;
+  }, [getOrCreateDummyVideoTrack]);
 
   const send = useCallback(async (event: string, payload: Record<string, unknown>) => {
     const channel = channelRef.current;
@@ -241,9 +316,15 @@ export function useRoomCall(args: {
 
   const setLocalVideoTrack = useCallback(
     async (track: MediaStreamTrack | null) => {
-      const current = localStreamRef.current ?? new MediaStream();
+      const current = ensureLocalStream();
+      const dummy = getOrCreateDummyVideoTrack();
 
       for (const t of current.getVideoTracks()) {
+        // Don't stop the dummy track; we can reuse it when camera is off.
+        if (dummy && t === dummy) {
+          current.removeTrack(t);
+          continue;
+        }
         try {
           t.stop();
         } catch {
@@ -252,21 +333,22 @@ export function useRoomCall(args: {
         current.removeTrack(t);
       }
 
-      if (track) current.addTrack(track);
+      const nextTrack = track ?? dummy;
+      if (nextTrack) current.addTrack(nextTrack);
       localStreamRef.current = current;
       // Create a new MediaStream instance for React state to guarantee re-render.
       setState((s) => ({
         ...s,
         localStream: new MediaStream(current.getTracks()),
       }));
-      await replaceTrackEverywhere("video", track);
+      await replaceTrackEverywhere("video", nextTrack ?? null);
     },
-    [replaceTrackEverywhere],
+    [ensureLocalStream, getOrCreateDummyVideoTrack, replaceTrackEverywhere],
   );
 
   const setLocalAudioTrack = useCallback(
     async (track: MediaStreamTrack | null) => {
-      const current = localStreamRef.current ?? new MediaStream();
+      const current = ensureLocalStream();
 
       for (const t of current.getAudioTracks()) {
         try {
@@ -285,7 +367,7 @@ export function useRoomCall(args: {
       }));
       await replaceTrackEverywhere("audio", track);
     },
-    [replaceTrackEverywhere],
+    [ensureLocalStream, replaceTrackEverywhere],
   );
 
   const enableCamera = useCallback(async () => {
@@ -297,10 +379,23 @@ export function useRoomCall(args: {
         throw new Error("Camera requires HTTPS (or localhost).");
       }
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: "user" },
+        // Conservative defaults to improve reliability on lower-end phones.
+        video: {
+          facingMode: "user",
+          width: { ideal: 640 },
+          height: { ideal: 360 },
+          frameRate: { ideal: 20, max: 30 },
+        },
         audio: false,
       });
       const track = stream.getVideoTracks()[0] ?? null;
+      if (track) {
+        try {
+          track.contentHint = "motion";
+        } catch {
+          // ignore
+        }
+      }
       await setLocalVideoTrack(track);
       setState((s) => ({ ...s, camOn: Boolean(track), error: null }));
       await updatePresenceMeta({ camOn: Boolean(track) });
@@ -371,6 +466,20 @@ export function useRoomCall(args: {
       const videoTx = pc.addTransceiver("video", { direction: "sendrecv" });
       const audioTx = pc.addTransceiver("audio", { direction: "sendrecv" });
 
+      // Prefer H264 first (iOS/WebKit interop), then fall back to browser defaults.
+      try {
+        const caps = RTCRtpSender.getCapabilities?.("video");
+        const codecs = caps?.codecs ?? [];
+        if (typeof videoTx.setCodecPreferences === "function" && codecs.length > 0) {
+          const isH264 = (c: { mimeType?: string }) =>
+            c.mimeType?.toLowerCase?.() === "video/h264";
+          const preferred = [...codecs.filter(isH264), ...codecs.filter((c) => !isH264(c))];
+          videoTx.setCodecPreferences(preferred);
+        }
+      } catch {
+        // ignore
+      }
+
       const peer: Peer = {
         pc,
         remoteStream,
@@ -426,7 +535,20 @@ export function useRoomCall(args: {
       };
 
       // Attach any current local tracks.
-      const ls = localStreamRef.current;
+      const ls = ensureLocalStream();
+
+      // Associate senders with a stream id (helps some browsers with msid/track routing).
+      try {
+        (videoTx.sender as unknown as { setStreams?: (...s: MediaStream[]) => void }).setStreams?.(ls);
+      } catch {
+        // ignore
+      }
+      try {
+        (audioTx.sender as unknown as { setStreams?: (...s: MediaStream[]) => void }).setStreams?.(ls);
+      } catch {
+        // ignore
+      }
+
       const v = ls?.getVideoTracks()[0] ?? null;
       const a = ls?.getAudioTracks()[0] ?? null;
       try {
@@ -449,7 +571,7 @@ export function useRoomCall(args: {
 
       return peer;
     },
-    [args.roomId, args.userId, closePeer, send],
+    [args.roomId, args.userId, closePeer, ensureLocalStream, send],
   );
 
   const ensurePeer = useCallback(
@@ -685,6 +807,16 @@ export function useRoomCall(args: {
       }
       localStreamRef.current = null;
 
+      const dummy = dummyVideoRef.current?.track ?? null;
+      if (dummy) {
+        try {
+          dummy.stop();
+        } catch {
+          // ignore
+        }
+      }
+      dummyVideoRef.current = null;
+
       setState((s) => ({
         ...s,
         channel: null,
@@ -694,6 +826,7 @@ export function useRoomCall(args: {
         micOn: false,
         localStream: null,
         remoteStreams: [],
+        debugPeers: [],
       }));
       void supabase.removeChannel(channel);
     };
@@ -707,6 +840,71 @@ export function useRoomCall(args: {
     send,
     supabase,
   ]);
+
+  // Lightweight peer diagnostics for debugging real-world device issues.
+  useEffect(() => {
+    if (!state.isReady) return;
+    let cancelled = false;
+
+    const sample = async () => {
+      const entries = Array.from(peersRef.current.entries());
+      const next = await Promise.all(
+        entries.map(async ([peerId, peer]) => {
+          let outboundAudioBytes = 0;
+          let outboundVideoBytes = 0;
+          let inboundAudioBytes = 0;
+          let inboundVideoBytes = 0;
+
+          try {
+            const stats = await peer.pc.getStats();
+            stats.forEach((r) => {
+              const rec = r as unknown as Record<string, unknown>;
+              const type = typeof rec.type === "string" ? rec.type : "";
+              const kind =
+                (typeof rec.kind === "string" ? rec.kind : null) ??
+                (typeof rec.mediaType === "string" ? rec.mediaType : "");
+              const isRemote = Boolean(rec.isRemote);
+              const bytesSent = typeof rec.bytesSent === "number" ? rec.bytesSent : 0;
+              const bytesReceived =
+                typeof rec.bytesReceived === "number" ? rec.bytesReceived : 0;
+
+              if (type === "outbound-rtp" && !isRemote) {
+                if (kind === "audio") outboundAudioBytes += bytesSent;
+                if (kind === "video") outboundVideoBytes += bytesSent;
+              }
+              if (type === "inbound-rtp" && !isRemote) {
+                if (kind === "audio") inboundAudioBytes += bytesReceived;
+                if (kind === "video") inboundVideoBytes += bytesReceived;
+              }
+            });
+          } catch {
+            // ignore
+          }
+
+          return {
+            peerId,
+            connectionState: peer.pc.connectionState,
+            signalingState: peer.pc.signalingState,
+            iceConnectionState: peer.pc.iceConnectionState,
+            outboundAudioBytes,
+            outboundVideoBytes,
+            inboundAudioBytes,
+            inboundVideoBytes,
+          } satisfies CallPeerDebug;
+        }),
+      );
+
+      if (cancelled) return;
+      setState((s) => ({ ...s, debugPeers: next }));
+    };
+
+    void sample();
+    const id = window.setInterval(() => void sample(), 2000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [state.isReady]);
 
   // Keep display name in call presence (best-effort).
   useEffect(() => {

@@ -257,6 +257,7 @@ export default function RoomPage() {
           <aside className="flex flex-col gap-6 lg:sticky lg:top-24 lg:self-start">
             {roomId ? (
               <RoomCall
+                key={roomId}
                 roomId={roomId}
                 userId={auth.user?.id ?? null}
                 displayName={auth.displayName}

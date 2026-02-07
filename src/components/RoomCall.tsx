@@ -16,10 +16,12 @@ function StreamTile(props: {
   muted?: boolean;
   mirror?: boolean;
   rightBadge?: string | null;
+  videoEnabled?: boolean;
 }) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const [playError, setPlayError] = useState<string | null>(null);
   const [hasVideo, setHasVideo] = useState(false);
+  const showVideo = hasVideo && (props.videoEnabled ?? true);
 
   useEffect(() => {
     const el = videoRef.current;
@@ -114,11 +116,11 @@ function StreamTile(props: {
           className={[
             "h-full w-full object-cover",
             props.mirror ? "-scale-x-100" : "",
-            hasVideo ? "opacity-100" : "opacity-0",
+            showVideo ? "opacity-100" : "opacity-0",
           ].join(" ")}
         />
 
-        {!hasVideo ? (
+        {!showVideo ? (
           <div className="absolute inset-0 flex items-center justify-center bg-[#111]">
             <div className="text-xs font-bold text-white/80">Camera off</div>
           </div>
@@ -208,6 +210,7 @@ function CallSession(props: {
     userId: props.userId,
     displayName: props.displayName,
   });
+  const [showDebug, setShowDebug] = useState(false);
 
   const participants = call.participants;
   const participantsByPeerId = useMemo(() => {
@@ -229,6 +232,7 @@ function CallSession(props: {
       rightBadge: string | null;
       muted?: boolean;
       mirror?: boolean;
+      videoEnabled?: boolean;
     }> = [];
 
     t.push({
@@ -238,6 +242,7 @@ function CallSession(props: {
       rightBadge: myBadge,
       muted: true,
       mirror: true,
+      videoEnabled: call.camOn,
     });
 
     for (const r of call.remoteStreams) {
@@ -255,11 +260,13 @@ function CallSession(props: {
         stream: r.stream,
         label,
         rightBadge: badge || null,
+        videoEnabled: Boolean(p?.camOn),
       });
     }
 
     return t;
   }, [
+    call.camOn,
     call.localStream,
     call.peerId,
     call.remoteStreams,
@@ -302,6 +309,14 @@ function CallSession(props: {
           {call.micOn ? "Mic On" : "Mic Off"}
         </button>
         <button
+          className="nt-btn nt-btn-outline"
+          onClick={() => setShowDebug((v) => !v)}
+          disabled={!call.isReady}
+          title="Show call diagnostics"
+        >
+          {showDebug ? "Hide" : "Diagnostics"}
+        </button>
+        <button
           className="nt-btn nt-btn-outline ml-auto"
           onClick={props.onLeave}
           title="Leave meet"
@@ -316,6 +331,68 @@ function CallSession(props: {
         </div>
       ) : null}
 
+      {showDebug ? (
+        <div className="mt-3 rounded-[12px] border border-black/10 bg-white p-3">
+          <div className="text-xs font-extrabold text-[var(--foreground)]">
+            Diagnostics
+          </div>
+          <div className="mt-2 flex flex-col gap-2 text-[11px] font-semibold text-[var(--muted)]">
+            {call.debugPeers.length === 0 ? (
+              <div>No peers yet.</div>
+            ) : (
+              call.debugPeers.map((p) => (
+                <div
+                  key={p.peerId}
+                  className="rounded-[10px] border border-black/10 bg-[var(--surface-2)] px-3 py-2"
+                >
+                  <div className="font-mono text-[10px] text-[var(--foreground)]">
+                    peer {p.peerId.slice(0, 8)}...
+                  </div>
+                  <div className="mt-1 grid grid-cols-2 gap-2">
+                    <div>
+                      conn:{" "}
+                      <span className="font-mono text-[var(--foreground)]">
+                        {p.connectionState}
+                      </span>
+                    </div>
+                    <div>
+                      ice:{" "}
+                      <span className="font-mono text-[var(--foreground)]">
+                        {p.iceConnectionState}
+                      </span>
+                    </div>
+                    <div>
+                      outV:{" "}
+                      <span className="font-mono text-[var(--foreground)]">
+                        {p.outboundVideoBytes}
+                      </span>
+                    </div>
+                    <div>
+                      inV:{" "}
+                      <span className="font-mono text-[var(--foreground)]">
+                        {p.inboundVideoBytes}
+                      </span>
+                    </div>
+                    <div>
+                      outA:{" "}
+                      <span className="font-mono text-[var(--foreground)]">
+                        {p.outboundAudioBytes}
+                      </span>
+                    </div>
+                    <div>
+                      inA:{" "}
+                      <span className="font-mono text-[var(--foreground)]">
+                        {p.inboundAudioBytes}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      ) : null}
+
       <div className="mt-3">
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
           {tiles.map((t) => (
@@ -326,6 +403,7 @@ function CallSession(props: {
               rightBadge={t.rightBadge}
               muted={t.muted}
               mirror={t.mirror}
+              videoEnabled={t.videoEnabled}
             />
           ))}
         </div>
@@ -344,7 +422,15 @@ export function RoomCall(props: {
   userId: string | null;
   displayName: string;
 }) {
-  const [joined, setJoined] = useState(false);
+  const storageKey = useMemo(() => `nt:meet:joined:${props.roomId}`, [props.roomId]);
+  const [joined, setJoined] = useState(() => {
+    if (typeof window === "undefined") return false;
+    try {
+      return localStorage.getItem(storageKey) === "1";
+    } catch {
+      return false;
+    }
+  });
 
   if (!joined) {
     return (
@@ -352,7 +438,14 @@ export function RoomCall(props: {
         roomId={props.roomId}
         userId={props.userId}
         displayName={props.displayName}
-        onJoin={() => setJoined(true)}
+        onJoin={() => {
+          setJoined(true);
+          try {
+            localStorage.setItem(storageKey, "1");
+          } catch {
+            // ignore
+          }
+        }}
       />
     );
   }
@@ -362,7 +455,14 @@ export function RoomCall(props: {
       roomId={props.roomId}
       userId={props.userId}
       displayName={props.displayName}
-      onLeave={() => setJoined(false)}
+      onLeave={() => {
+        setJoined(false);
+        try {
+          localStorage.removeItem(storageKey);
+        } catch {
+          // ignore
+        }
+      }}
     />
   );
 }
