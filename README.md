@@ -44,6 +44,9 @@ Open `http://localhost:3000`:
 4. Window B: open the copied room link.
 5. Set a YouTube video, then Play/Pause/Seek in one window and verify the other window follows.
 6. Click "Raise Hand" and verify the toast + presence badge.
+7. In the Room page, test "Meet":
+   - Click "Camera On" / "Mic On" in both windows.
+   - Verify you can see/hear the other participant.
 
 ## Notes
 
@@ -51,3 +54,9 @@ Open `http://localhost:3000`:
   - Broadcast events for low-latency play/pause/seek
   - Database updates for a reliable "latest known state" for late joiners
 - RLS is enabled; policies are currently permissive for authenticated users (including anonymous auth) to keep the prototype unblocked.
+
+- Meet uses:
+  - WebRTC (peer-to-peer mesh) for camera/mic
+  - Supabase Realtime broadcast for signaling (offer/answer/ICE)
+  - STUN only by default; for real-world reliability you will likely need a TURN server.
+  - `getUserMedia()` requires HTTPS (or localhost) to access camera/microphone.

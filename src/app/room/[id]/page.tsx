@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 
 import { SyncedPlayer } from "@/components/SyncedPlayer";
+import { RoomCall } from "@/components/RoomCall";
 import { Toast } from "@/components/Toast";
 import { SiteHeader } from "@/components/SiteHeader";
 import { useRoomSync } from "@/hooks/useRoomSync";
@@ -204,6 +205,13 @@ export default function RoomPage() {
           </section>
 
           <aside className="flex flex-col gap-6">
+            {roomId ? (
+              <RoomCall
+                roomId={roomId}
+                userId={auth.user?.id ?? null}
+                displayName={auth.displayName}
+              />
+            ) : null}
             <div className="nt-card p-4">
               <div className="text-sm font-extrabold text-[var(--foreground)]">Presence</div>
               <div className="mt-2 flex flex-col gap-2">

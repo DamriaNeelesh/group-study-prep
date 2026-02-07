@@ -95,30 +95,25 @@ export function useRoomCall(args: {
     remoteStreams: [],
   });
 
+  const channelRef = useRef<RealtimeChannel | null>(null);
   const peersRef = useRef<Map<string, Peer>>(new Map());
   const localStreamRef = useRef<MediaStream | null>(null);
   const presenceMetaRef = useRef<CallPresenceMeta | null>(null);
 
-  const send = useCallback(
-    async (event: string, payload: Record<string, unknown>) => {
-      const channel = state.channel;
-      if (!channel) return;
-      await channel.send({ type: "broadcast", event, payload });
-    },
-    [state.channel],
-  );
+  const send = useCallback(async (event: string, payload: Record<string, unknown>) => {
+    const channel = channelRef.current;
+    if (!channel) return;
+    await channel.send({ type: "broadcast", event, payload });
+  }, []);
 
-  const updatePresenceMeta = useCallback(
-    async (patch: Partial<CallPresenceMeta>) => {
-      const channel = state.channel;
-      const meta = presenceMetaRef.current;
-      if (!channel || !meta) return;
-      const next = { ...meta, ...patch };
-      presenceMetaRef.current = next;
-      await channel.track(next);
-    },
-    [state.channel],
-  );
+  const updatePresenceMeta = useCallback(async (patch: Partial<CallPresenceMeta>) => {
+    const channel = channelRef.current;
+    const meta = presenceMetaRef.current;
+    if (!channel || !meta) return;
+    const next = { ...meta, ...patch };
+    presenceMetaRef.current = next;
+    await channel.track(next);
+  }, []);
 
   const closePeer = useCallback((remoteUserId: string) => {
     const peer = peersRef.current.get(remoteUserId);
@@ -260,8 +255,6 @@ export function useRoomCall(args: {
     async (remoteUserId: string) => {
       const localUserId = args.userId;
       if (!localUserId) return null;
-      const channel = state.channel;
-      if (!channel) return null;
 
       const pc = new RTCPeerConnection({
         iceServers: [
@@ -287,7 +280,17 @@ export function useRoomCall(args: {
 
       pc.ontrack = (ev) => {
         // Some browsers provide streams; some only provide tracks. Prefer track-based.
-        remoteStream.addTrack(ev.track);
+        const already = remoteStream
+          .getTracks()
+          .some((t) => t.id === ev.track.id);
+        if (!already) remoteStream.addTrack(ev.track);
+      };
+
+      pc.onconnectionstatechange = () => {
+        const s = pc.connectionState;
+        if (s === "failed" || s === "disconnected" || s === "closed") {
+          closePeer(remoteUserId);
+        }
       };
 
       pc.onicecandidate = (ev) => {
@@ -324,7 +327,7 @@ export function useRoomCall(args: {
 
       return peer;
     },
-    [args.roomId, args.userId, send, state.channel],
+    [args.roomId, args.userId, closePeer, send],
   );
 
   const ensurePeer = useCallback(
@@ -382,6 +385,7 @@ export function useRoomCall(args: {
     if (!roomId || !userId) return;
 
     let ignore = false;
+    const peers = peersRef.current;
 
     const channel = supabase.channel(`call:${roomId}`, {
       config: {
@@ -389,6 +393,7 @@ export function useRoomCall(args: {
         presence: { key: userId },
       },
     });
+    channelRef.current = channel;
 
     presenceMetaRef.current = {
       userId,
@@ -511,8 +516,19 @@ export function useRoomCall(args: {
     return () => {
       ignore = true;
       presenceMetaRef.current = null;
+      channelRef.current = null;
 
-      for (const k of Array.from(peersRef.current.keys())) closePeer(k);
+      for (const k of Array.from(peers.keys())) closePeer(k);
+      const ls = localStreamRef.current;
+      if (ls) {
+        for (const t of ls.getTracks()) {
+          try {
+            t.stop();
+          } catch {
+            // ignore
+          }
+        }
+      }
       localStreamRef.current = null;
 
       setState((s) => ({
@@ -520,19 +536,31 @@ export function useRoomCall(args: {
         channel: null,
         isReady: false,
         participants: [],
+        camOn: false,
+        micOn: false,
+        localStream: null,
         remoteStreams: [],
       }));
       void supabase.removeChannel(channel);
     };
-  }, [args.displayName, args.roomId, args.userId, closePeer, ensurePeer, flushPendingCandidates, send, supabase]);
+  }, [
+    args.displayName,
+    args.roomId,
+    args.userId,
+    closePeer,
+    ensurePeer,
+    flushPendingCandidates,
+    send,
+    supabase,
+  ]);
 
   // Keep display name in call presence (best-effort).
   useEffect(() => {
-    if (!state.channel) return;
     const userId = args.userId;
     if (!userId) return;
+    if (!state.isReady) return;
     void updatePresenceMeta({ displayName: args.displayName || null });
-  }, [args.displayName, args.userId, state.channel, updatePresenceMeta]);
+  }, [args.displayName, args.userId, state.isReady, updatePresenceMeta]);
 
   // When call presence changes, ensure we have peers for everyone currently in the call channel.
   useEffect(() => {
@@ -567,4 +595,3 @@ export function useRoomCall(args: {
     disableMic,
   };
 }
-

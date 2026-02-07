@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import { useRoomCall } from "@/hooks/useRoomCall";
+import { type CallParticipant, useRoomCall } from "@/hooks/useRoomCall";
 
 function StreamTile(props: {
   stream: MediaStream | null;
@@ -25,26 +25,38 @@ function StreamTile(props: {
   useEffect(() => {
     const el = videoRef.current;
     if (!el) return;
-    setPlayError(null);
 
     if (!props.stream) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (el as any).srcObject = null;
+      el.srcObject = null;
+      Promise.resolve().then(() => setPlayError(null));
       return;
     }
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (el as any).srcObject = props.stream;
+    el.srcObject = props.stream;
     const p = el.play();
     if (p && typeof p.then === "function") {
-      p.catch((e: unknown) => {
+      p.then(() => setPlayError(null)).catch((e: unknown) => {
         setPlayError(e instanceof Error ? e.message : String(e));
       });
+    } else {
+      Promise.resolve().then(() => setPlayError(null));
     }
   }, [props.stream]);
 
   return (
-    <div className="relative overflow-hidden rounded-[12px] border border-black/10 bg-black shadow-[0_1px_14px_rgba(0,0,0,0.08)]">
+    <div
+      className="relative overflow-hidden rounded-[12px] border border-black/10 bg-black shadow-[0_1px_14px_rgba(0,0,0,0.08)]"
+      onClick={() => {
+        const el = videoRef.current;
+        if (!el) return;
+        const p = el.play();
+        if (p && typeof p.then === "function") {
+          p.then(() => setPlayError(null)).catch(() => void 0);
+        } else {
+          setPlayError(null);
+        }
+      }}
+    >
       <div className="aspect-video w-full">
         <video
           ref={videoRef}
@@ -97,11 +109,12 @@ export function RoomCall(props: {
     displayName: props.displayName,
   });
 
+  const participants = call.participants;
   const participantsById = useMemo(() => {
-    const m = new Map<string, (typeof call.participants)[number]>();
-    for (const p of call.participants) m.set(p.userId, p);
+    const m = new Map<string, CallParticipant>();
+    for (const p of participants) m.set(p.userId, p);
     return m;
-  }, [call.participants]);
+  }, [participants]);
 
   const myLabel =
     props.displayName?.trim() ||
@@ -196,4 +209,3 @@ export function RoomCall(props: {
     </div>
   );
 }
-
