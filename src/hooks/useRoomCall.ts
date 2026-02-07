@@ -340,9 +340,18 @@ export function useRoomCall(args: {
 
       pc.onconnectionstatechange = () => {
         const s = pc.connectionState;
-        if (s === "failed" || s === "disconnected" || s === "closed") {
+        // `disconnected` can be transient on mobile networks; don't tear down aggressively.
+        if (s === "failed") {
+          setState((prev) => ({
+            ...prev,
+            error:
+              prev.error ??
+              "Call connection failed. If devices are on different networks, you may need a TURN server for reliable WebRTC.",
+          }));
           closePeer(remotePeerId);
+          return;
         }
+        if (s === "closed") closePeer(remotePeerId);
       };
 
       pc.onicecandidate = (ev) => {

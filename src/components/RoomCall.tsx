@@ -19,14 +19,37 @@ function StreamTile(props: {
 }) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const [playError, setPlayError] = useState<string | null>(null);
-
-  const hasVideo = Boolean(props.stream?.getVideoTracks().length);
+  const [hasVideo, setHasVideo] = useState(false);
 
   useEffect(() => {
     const el = videoRef.current;
     if (!el) return;
     el.muted = Boolean(props.muted);
   }, [props.muted]);
+
+  useEffect(() => {
+    const stream = props.stream;
+    const compute = () => {
+      if (!stream) {
+        setHasVideo(false);
+        return;
+      }
+      setHasVideo(stream.getVideoTracks().length > 0);
+    };
+
+    compute();
+    if (!stream) return;
+
+    const onAdd = () => compute();
+    const onRemove = () => compute();
+
+    stream.addEventListener("addtrack", onAdd);
+    stream.addEventListener("removetrack", onRemove);
+    return () => {
+      stream.removeEventListener("addtrack", onAdd);
+      stream.removeEventListener("removetrack", onRemove);
+    };
+  }, [props.stream]);
 
   useEffect(() => {
     const el = videoRef.current;
