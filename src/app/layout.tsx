@@ -29,7 +29,7 @@ export default function RootLayout({
         suppressHydrationWarning
         className={`${redditSans.variable} ${jetbrainsMono.variable} antialiased`}
       >
-        {children}
+        <div className="nt-page">{children}</div>
       </body>
     </html>
   );

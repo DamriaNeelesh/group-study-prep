@@ -26,12 +26,22 @@ export function SyncedPlayer(props: Props) {
   const lastVideoIdRef = useRef<string | null>(null);
   const [seekInput, setSeekInput] = useState<string>("");
   const [autoplayBlocked, setAutoplayBlocked] = useState(false);
+  const lastBecameVisibleAtRef = useRef<number>(0);
 
   const isDocHidden = useCallback(() => {
     // When a mobile user backgrounds the tab/app, YouTube often auto-pauses and timers
     // get throttled. If we broadcast those "pause/seek" events, it degrades UX for everyone.
     if (typeof document === "undefined") return false;
     return Boolean(document.hidden);
+  }, []);
+
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    const onVis = () => {
+      if (!document.hidden) lastBecameVisibleAtRef.current = Date.now();
+    };
+    document.addEventListener("visibilitychange", onVis);
+    return () => document.removeEventListener("visibilitychange", onVis);
   }, []);
 
   const withSuppressedEvents = useCallback(async (fn: () => void | Promise<void>) => {
@@ -69,6 +79,13 @@ export function SyncedPlayer(props: Props) {
     (e: YouTubeEvent<number>) => {
       if (suppressEventsRef.current) return;
       if (isDocHidden()) return;
+
+      // iOS/Android sometimes emits a "paused" state after the tab becomes visible again.
+      // Ignore these transient state changes so one user's backgrounding doesn't pause the room.
+      if (e.data === 2) {
+        const visibleAt = lastBecameVisibleAtRef.current;
+        if (visibleAt && Date.now() - visibleAt < 1500) return;
+      }
       // https://developers.google.com/youtube/iframe_api_reference#Playback_status
       // 1 = playing, 2 = paused
       if (e.data === 1) {

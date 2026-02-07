@@ -18,6 +18,7 @@ export default function RoomPage() {
   const roomId = isUuid(rawId) ? rawId : "";
   const router = useRouter();
   const auth = useSupabaseAuth();
+  const [uiToast, setUiToast] = useState<string | null>(null);
 
   const room = useRoomSync({
     roomId,
@@ -60,14 +61,45 @@ export default function RoomPage() {
             <div className="flex flex-wrap items-center gap-2">
               <button
                 className="nt-btn nt-btn-outline"
-                onClick={() => void navigator.clipboard?.writeText(location.href)}
+                onClick={() => {
+                  void (async () => {
+                    try {
+                      await navigator.clipboard?.writeText(location.href);
+                      setUiToast("Link copied");
+                    } catch {
+                      setUiToast("Copy failed");
+                    }
+                  })();
+                }}
                 disabled={!roomId}
               >
                 Copy Link
               </button>
               <button
                 className="nt-btn nt-btn-outline"
-                onClick={() => void room.resyncRoom()}
+                onClick={() => {
+                  void (async () => {
+                    if (!roomId) return;
+                    try {
+                      await navigator.clipboard?.writeText(roomId);
+                      setUiToast("Room ID copied");
+                    } catch {
+                      setUiToast("Copy failed");
+                    }
+                  })();
+                }}
+                disabled={!roomId}
+              >
+                Copy ID
+              </button>
+              <button
+                className="nt-btn nt-btn-outline"
+                onClick={() => {
+                  void (async () => {
+                    await room.resyncRoom();
+                    setUiToast("Resynced");
+                  })();
+                }}
                 disabled={!room.isReady}
               >
                 Resync
@@ -204,7 +236,7 @@ export default function RoomPage() {
             </div>
           </section>
 
-          <aside className="flex flex-col gap-6">
+          <aside className="flex flex-col gap-6 lg:sticky lg:top-24 lg:self-start">
             {roomId ? (
               <RoomCall
                 roomId={roomId}
@@ -252,8 +284,14 @@ export default function RoomPage() {
         </div>
       </main>
 
-      {room.toast ? (
-        <Toast message={room.toast} onDismiss={room.clearToast} />
+      {uiToast || room.toast ? (
+        <Toast
+          message={uiToast ?? room.toast ?? ""}
+          onDismiss={() => {
+            if (uiToast) setUiToast(null);
+            else room.clearToast();
+          }}
+        />
       ) : null}
     </div>
   );

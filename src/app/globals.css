@@ -3,6 +3,7 @@
 :root {
   /* Inspired by nexttoppers.com: light canvas + charcoal UI + teal accent */
   --background: #fcfcfc;
+  --background-2: #f4f6f6;
   --foreground: #2b2b2b;
   --surface: #ffffff;
   --surface-2: #f1f1f1;
@@ -15,12 +16,14 @@
   --accent: #00c389;
   --accent-2: #008a63;
   --accent-soft: #eafff7;
+  --ring: rgba(0, 195, 137, 0.35);
 
   --radius-card: 12px;
   --radius-control: 8px;
 
   --shadow-nav: 0 1px 4px 0 rgba(0, 0, 0, 0.13);
   --shadow-card: 0 1px 14px 0 rgba(0, 0, 0, 0.06);
+  --shadow-card-hover: 0 10px 30px rgba(0, 0, 0, 0.10);
 }
 
 @theme inline {
@@ -36,12 +39,41 @@ body {
 }
 
 body {
-  background: var(--background);
+  background:
+    radial-gradient(900px 420px at 12% -5%, rgba(0, 195, 137, 0.13), transparent 55%),
+    radial-gradient(700px 380px at 85% 0%, rgba(0, 0, 0, 0.06), transparent 58%),
+    linear-gradient(180deg, var(--background) 0%, var(--background-2) 100%);
   color: var(--foreground);
   font-family: var(--font-sans);
 }
 
 @layer base {
+  ::selection {
+    background: rgba(0, 195, 137, 0.22);
+  }
+
+  .nt-page {
+    min-height: 100vh;
+    animation: nt-fade-up 380ms ease both;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .nt-page {
+      animation: none;
+    }
+  }
+
+  @keyframes nt-fade-up {
+    from {
+      opacity: 0;
+      transform: translate3d(0, 6px, 0);
+    }
+    to {
+      opacity: 1;
+      transform: translate3d(0, 0, 0);
+    }
+  }
+
   button,
   input,
   textarea,
@@ -69,6 +101,10 @@ body {
     border: 1px solid rgba(0, 0, 0, 0.08);
   }
 
+  .nt-card:hover {
+    box-shadow: var(--shadow-card-hover);
+  }
+
   .nt-nav {
     background: var(--surface);
     box-shadow: var(--shadow-nav);
@@ -80,6 +116,11 @@ body {
     @apply px-3 py-2 text-sm outline-none;
   }
 
+  .nt-input:focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+
   .nt-input::placeholder {
     color: var(--muted);
     font-weight: 500;
@@ -87,7 +128,26 @@ body {
 
   .nt-btn {
     border-radius: 10px;
-    @apply inline-flex items-center justify-center gap-2 px-3 py-2 text-sm font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-50;
+    @apply inline-flex items-center justify-center gap-2 px-3 py-2 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-50;
+    transition:
+      transform 160ms ease,
+      background-color 160ms ease,
+      color 160ms ease,
+      border-color 160ms ease,
+      box-shadow 160ms ease;
+  }
+
+  .nt-btn:hover:not(:disabled) {
+    transform: translate3d(0, -1px, 0);
+  }
+
+  .nt-btn:active:not(:disabled) {
+    transform: translate3d(0, 0, 0);
+  }
+
+  .nt-btn:focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
   }
 
   .nt-btn-primary {
