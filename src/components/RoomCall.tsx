@@ -40,7 +40,27 @@ function StreamTile(props: {
     compute();
     if (!stream) return;
 
-    const onAdd = () => compute();
+    const tryPlay = () => {
+      const el = videoRef.current;
+      if (!el) return;
+      try {
+        // Helps some browsers pick up newly-added tracks.
+        if (el.srcObject !== stream) el.srcObject = stream;
+      } catch {
+        // ignore
+      }
+      const p = el.play();
+      if (p && typeof p.then === "function") {
+        p.then(() => setPlayError(null)).catch(() => void 0);
+      } else {
+        setPlayError(null);
+      }
+    };
+
+    const onAdd = () => {
+      compute();
+      tryPlay();
+    };
     const onRemove = () => compute();
 
     stream.addEventListener("addtrack", onAdd);

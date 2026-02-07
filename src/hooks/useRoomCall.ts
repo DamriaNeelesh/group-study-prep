@@ -32,6 +32,8 @@ type Peer = {
   audioTx: RTCRtpTransceiver;
   pendingCandidates: RTCIceCandidateInit[];
   remoteDescSet: boolean;
+  makingOffer: boolean;
+  pendingOffer: boolean;
 };
 
 type State = {
@@ -157,6 +159,7 @@ export function useRoomCall(args: {
   const peersRef = useRef<Map<string, Peer>>(new Map());
   const localStreamRef = useRef<MediaStream | null>(null);
   const presenceMetaRef = useRef<CallPresenceMeta | null>(null);
+  const startOfferRef = useRef<(remotePeerId: string) => void>(() => void 0);
 
   const send = useCallback(async (event: string, payload: Record<string, unknown>) => {
     const channel = channelRef.current;
@@ -173,6 +176,33 @@ export function useRoomCall(args: {
     await channel.track(next);
   }, []);
 
+  const requestRenegotiate = useCallback(
+    async (remotePeerId: string) => {
+      const localUserId = args.userId;
+      if (!localUserId) return;
+      const localPeerId = localPeerIdRef.current;
+
+      // Only the deterministic initiator should create offers to avoid glare.
+      if (isOfferInitiator(localPeerId, remotePeerId)) {
+        startOfferRef.current(remotePeerId);
+        return;
+      }
+
+      await send("webrtc:renegotiate", {
+        roomId: args.roomId,
+        fromPeerId: localPeerId,
+        toPeerId: remotePeerId,
+        fromUserId: localUserId,
+      });
+    },
+    [args.roomId, args.userId, send],
+  );
+
+  const renegotiateAllPeers = useCallback(async () => {
+    const remotes = Array.from(peersRef.current.keys());
+    await Promise.all(remotes.map((id) => requestRenegotiate(id)));
+  }, [requestRenegotiate]);
+
   const closePeer = useCallback((remotePeerId: string) => {
     const peer = peersRef.current.get(remotePeerId);
     if (!peer) return;
@@ -180,6 +210,7 @@ export function useRoomCall(args: {
     try {
       peer.pc.onicecandidate = null;
       peer.pc.ontrack = null;
+      peer.pc.onsignalingstatechange = null;
       peer.pc.close();
     } catch {
       // ignore
@@ -273,19 +304,21 @@ export function useRoomCall(args: {
       await setLocalVideoTrack(track);
       setState((s) => ({ ...s, camOn: Boolean(track), error: null }));
       await updatePresenceMeta({ camOn: Boolean(track) });
+      await renegotiateAllPeers();
     } catch (e: unknown) {
       setState((s) => ({
         ...s,
         error: formatGetUserMediaError("camera", e),
       }));
     }
-  }, [setLocalVideoTrack, updatePresenceMeta]);
+  }, [renegotiateAllPeers, setLocalVideoTrack, updatePresenceMeta]);
 
   const disableCamera = useCallback(async () => {
     await setLocalVideoTrack(null);
     setState((s) => ({ ...s, camOn: false }));
     await updatePresenceMeta({ camOn: false });
-  }, [setLocalVideoTrack, updatePresenceMeta]);
+    await renegotiateAllPeers();
+  }, [renegotiateAllPeers, setLocalVideoTrack, updatePresenceMeta]);
 
   const enableMic = useCallback(async () => {
     try {
@@ -307,19 +340,21 @@ export function useRoomCall(args: {
       await setLocalAudioTrack(track);
       setState((s) => ({ ...s, micOn: Boolean(track), error: null }));
       await updatePresenceMeta({ micOn: Boolean(track) });
+      await renegotiateAllPeers();
     } catch (e: unknown) {
       setState((s) => ({
         ...s,
         error: formatGetUserMediaError("microphone", e),
       }));
     }
-  }, [setLocalAudioTrack, updatePresenceMeta]);
+  }, [renegotiateAllPeers, setLocalAudioTrack, updatePresenceMeta]);
 
   const disableMic = useCallback(async () => {
     await setLocalAudioTrack(null);
     setState((s) => ({ ...s, micOn: false }));
     await updatePresenceMeta({ micOn: false });
-  }, [setLocalAudioTrack, updatePresenceMeta]);
+    await renegotiateAllPeers();
+  }, [renegotiateAllPeers, setLocalAudioTrack, updatePresenceMeta]);
 
   const createPeer = useCallback(
     async (remotePeerId: string) => {
@@ -343,6 +378,8 @@ export function useRoomCall(args: {
         audioTx,
         pendingCandidates: [],
         remoteDescSet: false,
+        makingOffer: false,
+        pendingOffer: false,
       };
       peersRef.current.set(remotePeerId, peer);
 
@@ -352,6 +389,13 @@ export function useRoomCall(args: {
           .getTracks()
           .some((t) => t.id === ev.track.id);
         if (!already) remoteStream.addTrack(ev.track);
+      };
+
+      pc.onsignalingstatechange = () => {
+        if (!peer.pendingOffer) return;
+        if (pc.signalingState !== "stable") return;
+        peer.pendingOffer = false;
+        startOfferRef.current(remotePeerId);
       };
 
       pc.onconnectionstatechange = () => {
@@ -436,6 +480,15 @@ export function useRoomCall(args: {
       const localPeerId = localPeerIdRef.current;
       const peer = await ensurePeer(remotePeerId);
       if (!peer) return;
+      if (peer.makingOffer) {
+        peer.pendingOffer = true;
+        return;
+      }
+      if (peer.pc.signalingState !== "stable") {
+        peer.pendingOffer = true;
+        return;
+      }
+      peer.makingOffer = true;
       try {
         const offer = await peer.pc.createOffer();
         await peer.pc.setLocalDescription(offer);
@@ -453,10 +506,17 @@ export function useRoomCall(args: {
           ...s,
           error: e instanceof Error ? e.message : String(e),
         }));
+      } finally {
+        peer.makingOffer = false;
       }
     },
     [args.roomId, args.userId, ensurePeer, send],
   );
+
+  // Allow event handlers to trigger offer creation without needing to depend on `startOffer`.
+  startOfferRef.current = (remotePeerId: string) => {
+    void startOffer(remotePeerId);
+  };
 
   useEffect(() => {
     if (!supabase) return;
@@ -580,6 +640,17 @@ export function useRoomCall(args: {
         } catch {
           // ignore
         }
+      })
+      .on("broadcast", { event: "webrtc:renegotiate" }, async ({ payload }) => {
+        if (ignore) return;
+        const toPeerId = String(payload?.toPeerId ?? "");
+        if (toPeerId !== localPeerId) return;
+        const fromPeerId = String(payload?.fromPeerId ?? "");
+        if (!fromPeerId) return;
+
+        // Only the deterministic initiator should send offers.
+        if (!isOfferInitiator(localPeerId, fromPeerId)) return;
+        startOfferRef.current(fromPeerId);
       });
 
     channel.subscribe(async (status) => {
