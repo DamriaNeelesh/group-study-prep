@@ -35,6 +35,11 @@ function formatAuthErrorMessage(message: string) {
   return message;
 }
 
+function isInvalidRefreshTokenMessage(message: string) {
+  const m = message.toLowerCase();
+  return m.includes("invalid refresh token") || m.includes("refresh token not found");
+}
+
 type UseSupabaseAuthState = {
   isLoading: boolean;
   session: Session | null;
@@ -109,11 +114,24 @@ export function useSupabaseAuth() {
     if (!supabase) return;
     let ignore = false;
 
-    supabase.auth
-      .getSession()
-      .then(({ data, error }) => {
+    void (async () => {
+      try {
+        const { data, error } = await supabase.auth.getSession();
         if (ignore) return;
+
         if (error) {
+          // Common in dev/test: a stale or rotated refresh token in storage.
+          // Recover by clearing local session and letting the app sign in again.
+          if (isInvalidRefreshTokenMessage(error.message)) {
+            try {
+              await supabase.auth.signOut({ scope: "local" });
+            } catch {
+              // ignore
+            }
+            setState((s) => ({ ...s, isLoading: false, session: null, user: null, error: null }));
+            return;
+          }
+
           setState((s) => ({
             ...s,
             isLoading: false,
@@ -127,11 +145,11 @@ export function useSupabaseAuth() {
           isLoading: false,
           session: data.session,
           user: data.session?.user ?? null,
+          error: null,
         }));
 
         if (data.session?.user) refreshProfile(data.session.user);
-      })
-      .catch((e: unknown) => {
+      } catch (e: unknown) {
         if (ignore) return;
         setState((s) => ({
           ...s,
@@ -140,7 +158,8 @@ export function useSupabaseAuth() {
             e instanceof Error ? e.message : String(e),
           ),
         }));
-      });
+      }
+    })();
 
     const { data } = supabase.auth.onAuthStateChange((_event, session) => {
       if (ignore) return;
@@ -184,11 +203,26 @@ export function useSupabaseAuth() {
   const signOut = useCallback(async () => {
     if (!supabase) return;
     setState((s) => ({ ...s, error: null }));
-    const { error } = await supabase.auth.signOut();
-    if (error) {
-      setState((s) => ({ ...s, error: formatAuthErrorMessage(error.message) }));
+    const isGuest = Boolean(
+      (state.user as unknown as { is_anonymous?: boolean } | null)?.is_anonymous,
+    );
+
+    // Guests don't have anything to "log out" server-side; local is enough and avoids refresh-token edge cases.
+    const { error } = await supabase.auth.signOut({ scope: isGuest ? "local" : "global" });
+    if (!error) return;
+
+    // If the token is already invalid/rotated, fall back to local cleanup so the UI can recover.
+    if (isInvalidRefreshTokenMessage(error.message)) {
+      try {
+        await supabase.auth.signOut({ scope: "local" });
+      } catch {
+        // ignore
+      }
+      return;
     }
-  }, [supabase]);
+
+    setState((s) => ({ ...s, error: formatAuthErrorMessage(error.message) }));
+  }, [state.user, supabase]);
 
   const signInWithGoogle = useCallback(async () => {
     if (!supabase) return;
@@ -204,7 +238,7 @@ export function useSupabaseAuth() {
     );
     if (isGuest) {
       try {
-        await supabase.auth.signOut();
+        await supabase.auth.signOut({ scope: "local" });
       } catch {
         // ignore
       }
