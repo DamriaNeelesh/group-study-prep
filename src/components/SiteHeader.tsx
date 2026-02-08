@@ -66,24 +66,12 @@ export function SiteHeader(props: {
       return;
     }
 
-    const userId = props.userId?.toLowerCase() ?? null;
-    if (
-      looksLikeShortRoomCode(input) &&
-      userId &&
-      userId.startsWith(input.toLowerCase())
-    ) {
-      setJoinError(null);
-      router.push(`/room/${userId}`);
-      setQ("");
-      return;
-    }
-
     setJoinError(
       looksLikeShortRoomCode(input)
         ? "That looks like a short code (first 8 chars). Please paste the full Room ID (UUID) or the full room link."
         : "Paste a full room link or UUID.",
     );
-  }, [props.userId, q, router]);
+  }, [q, router]);
 
   async function copyUserId() {
     const userId = props.userId;

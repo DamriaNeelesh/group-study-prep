@@ -56,18 +56,9 @@ export default function HomePage() {
 
     const id = extractRoomIdFromInput(input);
     if (!id) {
-      const myUserId = auth.user?.id ?? null;
-      if (
-        looksLikeShortRoomCode(input) &&
-        myUserId?.toLowerCase().startsWith(input.toLowerCase())
-      ) {
-        setError(null);
-        router.push(`/room/${myUserId.toLowerCase()}`);
-        return;
-      }
       setError(
         looksLikeShortRoomCode(input)
-          ? "That looks like only the first 8 characters. Paste the full Room ID (UUID) / full room link, or click your ID badge (top right) to copy the full Guest ID."
+          ? "That looks like only the first 8 characters. Paste the full Room ID (UUID) or the full room link."
           : "Please paste a full Room ID (UUID) or a full room link like /room/<uuid>.",
       );
       return;

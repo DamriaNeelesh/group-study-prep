@@ -103,12 +103,17 @@ export function useRoomSync(args: {
   });
 
   const presenceMetaRef = useRef<PresenceMeta | null>(null);
+  const roomCreatedByRef = useRef<string | null>(null);
   const [nowMs, setNowMs] = useState(0);
 
   useEffect(() => {
     const id = setInterval(() => setNowMs(Date.now()), 1000);
     return () => clearInterval(id);
   }, []);
+
+  useEffect(() => {
+    roomCreatedByRef.current = state.room?.createdBy ?? null;
+  }, [state.room?.createdBy]);
 
   const resyncRoom = useCallback(async () => {
     if (!roomId || !userId) return;
@@ -185,6 +190,14 @@ export function useRoomSync(args: {
       if (!roomId) return null;
       if (!supabase) return null;
 
+      // Basic host-only gating on the client to prevent accidental "anyone can pause everyone"
+      // in the legacy Supabase Realtime sync mode. For full enforcement, use StudyRoom v2 SQL + socket backend.
+      const createdBy = state.room?.createdBy ?? null;
+      if (createdBy && userId && createdBy !== userId) {
+        setState((s) => ({ ...s, toast: "Only the host can control playback in this room." }));
+        return null;
+      }
+
       const { data, error } = await supabase
         .from("rooms")
         .update(patch)
@@ -201,12 +214,17 @@ export function useRoomSync(args: {
       setState((s) => ({ ...s, room: next }));
       return next;
     },
-    [roomId, supabase],
+    [roomId, state.room?.createdBy, supabase, userId],
   );
 
   const setVideo = useCallback(
     async (videoId: string | null) => {
       if (!roomId || !userId) return;
+      const createdBy = state.room?.createdBy ?? null;
+      if (createdBy && createdBy !== userId) {
+        setState((s) => ({ ...s, toast: "Only the host can set the video." }));
+        return;
+      }
       const at = new Date().toISOString();
 
       const next = await updateRoomRow({
@@ -228,12 +246,14 @@ export function useRoomSync(args: {
         updatedAt: next.updatedAt,
       });
     },
-    [roomId, sendRoomEvent, updateRoomRow, userId],
+    [roomId, sendRoomEvent, state.room?.createdBy, updateRoomRow, userId],
   );
 
   const play = useCallback(
     async (positionSeconds: number) => {
       if (!roomId || !userId) return;
+      const createdBy = state.room?.createdBy ?? null;
+      if (createdBy && createdBy !== userId) return;
       const at = new Date().toISOString();
 
       const next = await updateRoomRow({
@@ -253,12 +273,14 @@ export function useRoomSync(args: {
         updatedAt: next.updatedAt,
       });
     },
-    [roomId, sendRoomEvent, updateRoomRow, userId],
+    [roomId, sendRoomEvent, state.room?.createdBy, updateRoomRow, userId],
   );
 
   const pause = useCallback(
     async (positionSeconds: number) => {
       if (!roomId || !userId) return;
+      const createdBy = state.room?.createdBy ?? null;
+      if (createdBy && createdBy !== userId) return;
       const at = new Date().toISOString();
 
       const next = await updateRoomRow({
@@ -278,12 +300,14 @@ export function useRoomSync(args: {
         updatedAt: next.updatedAt,
       });
     },
-    [roomId, sendRoomEvent, updateRoomRow, userId],
+    [roomId, sendRoomEvent, state.room?.createdBy, updateRoomRow, userId],
   );
 
   const seek = useCallback(
     async (positionSeconds: number) => {
       if (!roomId || !userId) return;
+      const createdBy = state.room?.createdBy ?? null;
+      if (createdBy && createdBy !== userId) return;
       const at = new Date().toISOString();
 
       const next = await updateRoomRow({
@@ -302,7 +326,7 @@ export function useRoomSync(args: {
         updatedAt: next.updatedAt,
       });
     },
-    [roomId, sendRoomEvent, updateRoomRow, userId],
+    [roomId, sendRoomEvent, state.room?.createdBy, updateRoomRow, userId],
   );
 
   const raiseHand = useCallback(async () => {
@@ -379,6 +403,9 @@ export function useRoomSync(args: {
         }));
       })
       .on("broadcast", { event: "video:set" }, ({ payload }) => {
+        const fromUserId = typeof payload?.userId === "string" ? payload.userId : "";
+        const createdBy = roomCreatedByRef.current ?? "";
+        if (createdBy && fromUserId && fromUserId !== createdBy) return;
         const videoId =
           payload?.videoId === null
             ? null
@@ -412,6 +439,9 @@ export function useRoomSync(args: {
         );
       })
       .on("broadcast", { event: "video:play" }, ({ payload }) => {
+        const fromUserId = typeof payload?.userId === "string" ? payload.userId : "";
+        const createdBy = roomCreatedByRef.current ?? "";
+        if (createdBy && fromUserId && fromUserId !== createdBy) return;
         const positionSeconds = Number(payload?.positionSeconds ?? 0);
         const playbackRate = Number(payload?.playbackRate ?? 1);
         const updatedAt =
@@ -438,6 +468,9 @@ export function useRoomSync(args: {
         );
       })
       .on("broadcast", { event: "video:pause" }, ({ payload }) => {
+        const fromUserId = typeof payload?.userId === "string" ? payload.userId : "";
+        const createdBy = roomCreatedByRef.current ?? "";
+        if (createdBy && fromUserId && fromUserId !== createdBy) return;
         const positionSeconds = Number(payload?.positionSeconds ?? 0);
         const playbackRate = Number(payload?.playbackRate ?? 1);
         const updatedAt =
@@ -464,6 +497,9 @@ export function useRoomSync(args: {
         );
       })
       .on("broadcast", { event: "video:seek" }, ({ payload }) => {
+        const fromUserId = typeof payload?.userId === "string" ? payload.userId : "";
+        const createdBy = roomCreatedByRef.current ?? "";
+        if (createdBy && fromUserId && fromUserId !== createdBy) return;
         const positionSeconds = Number(payload?.positionSeconds ?? 0);
         const playbackRate = Number(payload?.playbackRate ?? 1);
         const updatedAt =

@@ -98,6 +98,22 @@ function randInt(min: number, max: number) {
   return Math.floor(Math.random() * (max - min + 1)) + min;
 }
 
+function safeRandomId() {
+  try {
+    return crypto.randomUUID();
+  } catch {
+    return `id_${Date.now().toString(16)}_${Math.random().toString(16).slice(2)}`;
+  }
+}
+
+function getOrCreateStorageId(storage: Storage, key: string) {
+  const existing = storage.getItem(key);
+  if (existing && existing.length >= 8) return existing;
+  const next = safeRandomId();
+  storage.setItem(key, next);
+  return next;
+}
+
 async function ntpSample(socket: Socket, timeoutMs: number) {
   const t0 = Date.now();
   const pong = await new Promise<{ t0: number; t1: number; t2: number }>((resolve, reject) => {
@@ -150,6 +166,23 @@ export function useRoomSyncSocket(args: {
   const missingEnvError = realtimeUrl
     ? null
     : "Missing env: NEXT_PUBLIC_REALTIME_URL (Socket sync backend URL)";
+
+  const clientInfo = useMemo(() => {
+    if (typeof window === "undefined") return { clientId: "", tabId: "" };
+    let clientId = "";
+    let tabId = "";
+    try {
+      clientId = getOrCreateStorageId(localStorage, "nt:clientId:v1");
+    } catch {
+      // ignore
+    }
+    try {
+      tabId = getOrCreateStorageId(sessionStorage, "nt:tabId:v1");
+    } catch {
+      // ignore
+    }
+    return { clientId, tabId };
+  }, []);
 
   const [state, setState] = useState<UseRoomSyncSocketState>({
     isReady: false,
@@ -278,7 +311,7 @@ export function useRoomSyncSocket(args: {
       transports: ["websocket"],
       reconnection: false,
       parser: msgpackParser,
-      auth: { token: "" },
+      auth: { token: "", displayName: args.displayName, clientId: clientInfo.clientId, tabId: clientInfo.tabId },
     });
     socketRef.current = socket;
 
@@ -304,7 +337,7 @@ export function useRoomSyncSocket(args: {
         try {
           const { data } = await supabase.auth.getSession();
           const token = data.session?.access_token ?? "";
-          socket.auth = { token };
+          socket.auth = { token, displayName: args.displayName, clientId: clientInfo.clientId, tabId: clientInfo.tabId };
         } catch {
           // ignore
         }
@@ -399,7 +432,7 @@ export function useRoomSyncSocket(args: {
       try {
         const { data } = await supabase.auth.getSession();
         const token = data.session?.access_token ?? "";
-        socket.auth = { token };
+        socket.auth = { token, displayName: args.displayName, clientId: clientInfo.clientId, tabId: clientInfo.tabId };
       } catch {
         // ignore
       }
@@ -428,12 +461,48 @@ export function useRoomSyncSocket(args: {
         // ignore
       }
     };
-  }, [args.roomId, args.userId, clearActionTimers, realtimeUrl, resyncRoom, scheduleAction, supabase]);
+  }, [
+    args.displayName,
+    args.roomId,
+    args.userId,
+    clearActionTimers,
+    clientInfo.clientId,
+    clientInfo.tabId,
+    realtimeUrl,
+    resyncRoom,
+    scheduleAction,
+    supabase,
+  ]);
 
   useEffect(() => {
     const cleanup = connect();
     return () => cleanup?.();
   }, [connect]);
+
+  // Periodically refresh clock offset (best-effort).
+  useEffect(() => {
+    const socket = socketRef.current;
+    if (!socket || !socket.connected) return;
+
+    let cancelled = false;
+    const id = window.setInterval(() => {
+      if (cancelled) return;
+      void (async () => {
+        try {
+          const offset = await computeBestOffset(socket);
+          offsetMsRef.current = offset;
+          setState((s) => ({ ...s, offsetMs: offset }));
+        } catch {
+          // ignore
+        }
+      })();
+    }, 60_000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [state.connection]);
 
   const sendCommand = useCallback(async (command: Record<string, unknown>) => {
     const socket = socketRef.current;
@@ -485,7 +554,10 @@ export function useRoomSyncSocket(args: {
         | { ok: true; token: string; url: string; room: string }
         | { ok: false; error: string }
       >((resolve) => {
-        socket.emit("stage:token", {}, (res: unknown) => {
+        socket.emit(
+          "stage:token",
+          { displayName: args.displayName, clientId: clientInfo.clientId, tabId: clientInfo.tabId },
+          (res: unknown) => {
           if (!isRecord(res)) return resolve({ ok: false, error: "bad_response" });
           if (res.ok === true) {
             const token = typeof res.token === "string" ? res.token : "";
@@ -496,7 +568,42 @@ export function useRoomSyncSocket(args: {
           }
           const error = typeof res.error === "string" ? res.error : "request_failed";
           resolve({ ok: false, error });
-        });
+          },
+        );
+      });
+      return resp;
+    },
+    requestTableToken: async (tableId: string) => {
+      const socket = socketRef.current;
+      if (!socket || !socket.connected) {
+        return { ok: false, error: "not_connected" } as const;
+      }
+      const cleaned = String(tableId || "")
+        .trim()
+        .replace(/[^a-zA-Z0-9_-]/g, "")
+        .slice(0, 16);
+      if (!cleaned) return { ok: false, error: "invalid_table" } as const;
+
+      const resp = await new Promise<
+        | { ok: true; token: string; url: string; room: string }
+        | { ok: false; error: string }
+      >((resolve) => {
+        socket.emit(
+          "table:token",
+          { tableId: cleaned, displayName: args.displayName, clientId: clientInfo.clientId, tabId: clientInfo.tabId },
+          (res: unknown) => {
+          if (!isRecord(res)) return resolve({ ok: false, error: "bad_response" });
+          if (res.ok === true) {
+            const token = typeof res.token === "string" ? res.token : "";
+            const url = typeof res.url === "string" ? res.url : "";
+            const room = typeof res.room === "string" ? res.room : "";
+            if (!token || !url || !room) return resolve({ ok: false, error: "bad_response" });
+            return resolve({ ok: true, token, url, room });
+          }
+          const error = typeof res.error === "string" ? res.error : "request_failed";
+          resolve({ ok: false, error });
+          },
+        );
       });
       return resp;
     },

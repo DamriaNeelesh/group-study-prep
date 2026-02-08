@@ -6,6 +6,7 @@ import { useParams, useRouter } from "next/navigation";
 import { SyncedPlayer } from "@/components/SyncedPlayer";
 import { RoomCall } from "@/components/RoomCall";
 import { StagePanel } from "@/components/StagePanel";
+import { TablePanel } from "@/components/TablePanel";
 import { Toast } from "@/components/Toast";
 import { SiteHeader } from "@/components/SiteHeader";
 import { useRoomSync } from "@/hooks/useRoomSync";
@@ -39,7 +40,12 @@ export default function RoomPage() {
   });
 
   const onlineCount = useSocket ? roomSocket.onlineCount : roomSupabase.presence.length;
-  const canControl = useSocket ? roomSocket.canControl : true;
+  const canControlSupabase = Boolean(
+    auth.user?.id &&
+      roomSupabase.room?.createdBy &&
+      roomSupabase.room.createdBy === auth.user.id,
+  );
+  const canControl = useSocket ? roomSocket.canControl : canControlSupabase;
   const isReady = useSocket ? roomSocket.isReady : roomSupabase.isReady;
   const roomError = useSocket ? roomSocket.error : roomSupabase.error;
   const toast = useSocket ? roomSocket.toast : roomSupabase.toast;
@@ -235,19 +241,17 @@ export default function RoomPage() {
                       Raise Hand
                     </button>
 
-                    {useSocket ? (
-                      <div className="ml-2 text-xs font-semibold text-[var(--muted)]">
-                        {canControl ? (
-                          <span className="rounded-full bg-[var(--surface-2)] px-2 py-1 text-[var(--foreground)]">
-                            You are the host
-                          </span>
-                        ) : (
-                          <span className="rounded-full bg-[var(--surface-2)] px-2 py-1 text-[var(--foreground)]">
-                            Host controls playback
-                          </span>
-                        )}
-                      </div>
-                    ) : null}
+                    <div className="ml-2 text-xs font-semibold text-[var(--muted)]">
+                      {canControl ? (
+                        <span className="rounded-full bg-[var(--surface-2)] px-2 py-1 text-[var(--foreground)]">
+                          You are the host
+                        </span>
+                      ) : (
+                        <span className="rounded-full bg-[var(--surface-2)] px-2 py-1 text-[var(--foreground)]">
+                          Host controls playback
+                        </span>
+                      )}
+                    </div>
                   </div>
                 </div>
 
@@ -306,12 +310,12 @@ export default function RoomPage() {
                     onChange={(e) => setVideoInput(e.target.value)}
                     placeholder="YouTube URL or Video ID"
                     className="w-full nt-input"
-                    disabled={!isReady || (useSocket && !canControl)}
+                    disabled={!isReady || !canControl}
                   />
                   <button
                     type="submit"
                     className="nt-btn nt-btn-primary"
-                    disabled={!isReady || (useSocket && !canControl)}
+                    disabled={!isReady || !canControl}
                   >
                     Set Video
                   </button>
@@ -331,9 +335,9 @@ export default function RoomPage() {
                   onPlay={(t) => void (useSocket ? roomSocket.play() : roomSupabase.play(t))}
                   onPause={(t) => void (useSocket ? roomSocket.pause() : roomSupabase.pause(t))}
                   onSeek={(t) => void (useSocket ? roomSocket.seek(t) : roomSupabase.seek(t))}
-                  nativeControls={!useSocket}
-                  emitPlayerEvents={!useSocket}
-                  controlsDisabled={useSocket && !canControl}
+                  nativeControls={canControl}
+                  emitPlayerEvents={canControl}
+                  controlsDisabled={!canControl}
                 />
               </div>
             </div>
@@ -342,6 +346,12 @@ export default function RoomPage() {
           <aside className="flex flex-col gap-6 lg:sticky lg:top-24 lg:self-start">
             {useSocket ? (
               <StagePanel requestToken={() => roomSocket.requestStageToken()} />
+            ) : null}
+            {useSocket && roomId ? (
+              <TablePanel
+                roomId={roomId}
+                requestToken={(tableId) => roomSocket.requestTableToken(tableId)}
+              />
             ) : null}
             {!useSocket && roomId ? (
               <RoomCall

@@ -1,7 +1,7 @@
 "use client";
 
 import type { Session, User } from "@supabase/supabase-js";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 
@@ -45,6 +45,7 @@ type UseSupabaseAuthState = {
 
 export function useSupabaseAuth() {
   const supabase = useMemo(() => getSupabaseBrowserClient(), []);
+  const suppressAutoAnonRef = useRef(false);
   const missingEnvError = supabase
     ? null
     : "Missing env: NEXT_PUBLIC_SUPABASE_URL and/or NEXT_PUBLIC_SUPABASE_ANON_KEY";
@@ -192,6 +193,22 @@ export function useSupabaseAuth() {
   const signInWithGoogle = useCallback(async () => {
     if (!supabase) return;
     setState((s) => ({ ...s, error: null }));
+    suppressAutoAnonRef.current = true;
+
+    // If the current session is anonymous, Supabase may attempt to LINK the Google identity
+    // to the anonymous user (requires "manual linking"). Most projects have it disabled,
+    // which causes confusing errors like "Manual linking is disabled" / "identity_already_exists".
+    // Fallback: sign out first, then do a normal Google OAuth sign-in.
+    const isGuest = Boolean(
+      (state.user as unknown as { is_anonymous?: boolean } | null)?.is_anonymous,
+    );
+    if (isGuest) {
+      try {
+        await supabase.auth.signOut();
+      } catch {
+        // ignore
+      }
+    }
 
     const redirectTo = `${location.origin}/`;
     const res = await supabase.auth.signInWithOAuth({
@@ -200,6 +217,7 @@ export function useSupabaseAuth() {
     });
 
     if (res.error) {
+      suppressAutoAnonRef.current = false;
       setState((s) => ({
         ...s,
         error: formatAuthErrorMessage(res.error.message),
@@ -208,7 +226,7 @@ export function useSupabaseAuth() {
     }
 
     if (res.data?.url) window.location.href = res.data.url;
-  }, [supabase]);
+  }, [state.user, supabase]);
 
   const setDisplayName = useCallback(
     async (displayName: string) => {
@@ -235,6 +253,7 @@ export function useSupabaseAuth() {
   useEffect(() => {
     if (state.isLoading) return;
     if (state.user) return;
+    if (suppressAutoAnonRef.current) return;
     void signInAnonymously();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.isLoading, state.user]);

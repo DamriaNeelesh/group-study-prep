@@ -49,6 +49,7 @@ const SYNC_EXEC_BUFFER_MS = envInt("SYNC_EXEC_BUFFER_MS", 2000);
 const SYNC_SEEK_BUFFER_MS = envInt("SYNC_SEEK_BUFFER_MS", 2500);
 const AUDIENCE_DELAY_SECONDS_DEFAULT = envInt("AUDIENCE_DELAY_SECONDS_DEFAULT", 0);
 const ROOM_MAX_STAGE = envInt("ROOM_MAX_STAGE", 20);
+const ROOM_MAX_TABLE = envInt("ROOM_MAX_TABLE", 8);
 
 const LIVEKIT_URL = optionalEnv("LIVEKIT_URL");
 const LIVEKIT_API_KEY = optionalEnv("LIVEKIT_API_KEY");
@@ -86,6 +87,38 @@ async function verifyToken(args: {
   const user = data.user;
   if (!user) throw new Error("unauthorized");
   return { userId: user.id, isAnonymous: Boolean((user as unknown as { is_anonymous?: boolean }).is_anonymous) };
+}
+
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return Boolean(v) && typeof v === "object" && !Array.isArray(v);
+}
+
+function sanitizeIdPart(id: unknown): string {
+  if (typeof id !== "string") return "";
+  return id.trim().replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 64);
+}
+
+function sanitizeDisplayName(name: unknown): string | null {
+  if (typeof name !== "string") return null;
+  const trimmed = name.trim();
+  if (!trimmed) return null;
+  const cleaned = trimmed
+    .replace(/\s+/g, " ")
+    // remove control chars
+    .replace(/[\u0000-\u001f\u007f]/g, "")
+    .slice(0, 64);
+  return cleaned.length > 0 ? cleaned : null;
+}
+
+function defaultParticipantName(userId: string, isAnonymous: boolean): string {
+  const short = userId.slice(0, 8);
+  return isAnonymous ? `Guest ${short}` : `Student ${short}`;
+}
+
+function livekitParticipantIdentity(userId: string, identitySuffix: string, socketId: string): string {
+  const suffix = identitySuffix || socketId;
+  // LiveKit requires identity to be unique per room; userId alone breaks multi-device joins.
+  return `${userId}:${suffix}`;
 }
 
 async function handleHttp(req: IncomingMessage, res: ServerResponse) {
@@ -140,6 +173,72 @@ async function main() {
   const livekitRoomService = livekitConfigured
     ? new RoomServiceClient(LIVEKIT_URL as string, LIVEKIT_API_KEY as string, LIVEKIT_API_SECRET as string)
     : null;
+
+  const roomAdvanceTimers = new Map<string, NodeJS.Timeout>();
+  const roomCreateUserId = new Map<string, string>();
+
+  const pendingKey = (roomId: string) => `room:pending:${roomId}`;
+  const lockKey = (roomId: string) => `lock:roomAdvance:${roomId}`;
+
+  async function scheduleNextRoomAdvance(roomId: string) {
+    const existing = roomAdvanceTimers.get(roomId);
+    if (existing) {
+      clearTimeout(existing);
+      roomAdvanceTimers.delete(roomId);
+    }
+
+    let nextDueAtMs = 0;
+    try {
+      const next = await redis.zRangeWithScores(pendingKey(roomId), 0, 0);
+      nextDueAtMs = next?.[0]?.score ?? 0;
+    } catch (e) {
+      log.warn({ err: e, roomId }, "scheduleNextRoomAdvance: failed to read pending actions");
+      return;
+    }
+
+    if (!nextDueAtMs || !Number.isFinite(nextDueAtMs)) return;
+
+    const delayMs = Math.max(0, nextDueAtMs - Date.now());
+    const timer = setTimeout(() => {
+      void (async () => {
+        roomAdvanceTimers.delete(roomId);
+
+        // Best-effort cross-node lock to reduce duplicate DB writes.
+        try {
+          const locked = await redis.set(lockKey(roomId), String(Date.now()), { NX: true, PX: 5000 });
+          if (!locked) {
+            await scheduleNextRoomAdvance(roomId);
+            return;
+          }
+        } catch {
+          // ignore lock failure; proceed
+        }
+
+        try {
+          const userIdForCreate = roomCreateUserId.get(roomId);
+          if (!userIdForCreate) {
+            // No known user to attribute a create; this should not happen in normal flow.
+            await scheduleNextRoomAdvance(roomId);
+            return;
+          }
+
+          const base = await getOrCreateRoomState(redis, supabaseAdmin, roomId, userIdForCreate);
+          await advanceRoomStateToNow({
+            redis,
+            supabaseAdmin,
+            state: base,
+            nowMs: Date.now(),
+          });
+        } catch (e) {
+          log.warn({ err: e, roomId }, "room advance failed");
+        } finally {
+          await scheduleNextRoomAdvance(roomId);
+        }
+      })();
+    }, delayMs);
+
+    roomAdvanceTimers.set(roomId, timer);
+  }
 
   // Basic connection storm limiter (best-effort; tune for production)
   io.use(async (socket, next) => {
@@ -255,6 +354,7 @@ async function main() {
       }
 
       const userId = socket.data.userId;
+      roomCreateUserId.set(roomId, userId);
       const prevRoomId = socket.data.roomId;
       if (prevRoomId && prevRoomId !== roomId) {
         socket.leave(roomSocketRoom(prevRoomId));
@@ -275,6 +375,7 @@ async function main() {
           nowMs: Date.now(),
         });
         const pending = await getUpcomingPendingActions(redis, roomId, Date.now(), 5);
+        void scheduleNextRoomAdvance(roomId);
         metrics.roomStateFetchDurationMs.observe(Date.now() - t0);
 
         const onlineCount = await redis.hLen(presenceKey(roomId));
@@ -306,6 +407,7 @@ async function main() {
           nowMs: Date.now(),
         });
         const pending = await getUpcomingPendingActions(redis, roomId, Date.now(), 5);
+        void scheduleNextRoomAdvance(roomId);
         const onlineCount = await redis.hLen(presenceKey(roomId));
         if (typeof ack === "function") ack({ ok: true, state, pending, onlineCount });
         else socket.emit("room:state", { ok: true, state, pending, onlineCount });
@@ -414,6 +516,7 @@ async function main() {
         };
 
         await addPendingAction(redis, roomId, action);
+        void scheduleNextRoomAdvance(roomId);
         metrics.commandsTotal.inc({ type: command.type });
 
         io.to(roomSocketRoom(roomId)).emit("room:action", action);
@@ -427,7 +530,7 @@ async function main() {
       }
     });
 
-    socket.on("stage:token", async (_payload: unknown, ack?: (res: unknown) => void) => {
+    socket.on("stage:token", async (payload: unknown, ack?: (res: unknown) => void) => {
       const roomId = socket.data.roomId;
       const userId = socket.data.userId;
       if (!roomId || !userId) {
@@ -483,8 +586,16 @@ async function main() {
           // If room doesn't exist yet, listParticipants may fail; allow.
         }
 
+        const p = isRecord(payload) ? payload : {};
+        const displayName = sanitizeDisplayName(p.displayName);
+        const tabId = sanitizeIdPart(p.tabId);
+        const clientId = sanitizeIdPart(p.clientId);
+        const identitySuffix = tabId || clientId || socket.id;
+
         const token = new AccessToken(LIVEKIT_API_KEY as string, LIVEKIT_API_SECRET as string, {
-          identity: userId,
+          identity: livekitParticipantIdentity(userId, identitySuffix, socket.id),
+          name: displayName ?? defaultParticipantName(userId, socket.data.isAnonymous),
+          metadata: JSON.stringify({ userId, roomId, kind: "stage" }),
         });
         token.addGrant({
           roomJoin: true,
@@ -496,6 +607,65 @@ async function main() {
 
         const jwt = token.toJwt();
         if (typeof ack === "function") ack({ ok: true, token: jwt, url: LIVEKIT_URL, room: stageRoomName });
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        if (typeof ack === "function") ack({ ok: false, error: msg });
+      }
+    });
+
+    socket.on("table:token", async (payload: unknown, ack?: (res: unknown) => void) => {
+      const roomId = socket.data.roomId;
+      const userId = socket.data.userId;
+      if (!roomId || !userId) {
+        if (typeof ack === "function") ack({ ok: false, error: "not_in_room" });
+        return;
+      }
+      if (!livekitConfigured || !livekitRoomService) {
+        if (typeof ack === "function") ack({ ok: false, error: "livekit_not_configured" });
+        return;
+      }
+
+      const p = isRecord(payload) ? payload : {};
+      const rawTableId = String(p.tableId ?? "").trim();
+      const tableId = rawTableId.replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 16);
+      if (!tableId) {
+        if (typeof ack === "function") ack({ ok: false, error: "invalid_table" });
+        return;
+      }
+
+      try {
+        const tableRoomName = `table:${roomId}:${tableId}`;
+
+        try {
+          const participants = await livekitRoomService.listParticipants(tableRoomName);
+          if ((participants?.length ?? 0) >= ROOM_MAX_TABLE) {
+            if (typeof ack === "function") ack({ ok: false, error: "table_full" });
+            return;
+          }
+        } catch {
+          // allow if room doesn't exist yet
+        }
+
+        const displayName = sanitizeDisplayName(p.displayName);
+        const tabId = sanitizeIdPart(p.tabId);
+        const clientId = sanitizeIdPart(p.clientId);
+        const identitySuffix = tabId || clientId || socket.id;
+
+        const token = new AccessToken(LIVEKIT_API_KEY as string, LIVEKIT_API_SECRET as string, {
+          identity: livekitParticipantIdentity(userId, identitySuffix, socket.id),
+          name: displayName ?? defaultParticipantName(userId, socket.data.isAnonymous),
+          metadata: JSON.stringify({ userId, roomId, kind: "table", tableId }),
+        });
+        token.addGrant({
+          roomJoin: true,
+          room: tableRoomName,
+          canPublish: true,
+          canSubscribe: true,
+          canPublishData: true,
+        });
+
+        const jwt = token.toJwt();
+        if (typeof ack === "function") ack({ ok: true, token: jwt, url: LIVEKIT_URL, room: tableRoomName });
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         if (typeof ack === "function") ack({ ok: false, error: msg });

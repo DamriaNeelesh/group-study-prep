@@ -31,6 +31,7 @@ export function SyncedPlayer(props: Props) {
   const [autoplayBlocked, setAutoplayBlocked] = useState(false);
   const lastBecameVisibleAtRef = useRef<number>(0);
   const needsApplyRef = useRef(false);
+  const lastSoftSeekAtRef = useRef<number>(0);
 
   const emitPlayerEvents = props.emitPlayerEvents !== false;
 
@@ -111,9 +112,21 @@ export function SyncedPlayer(props: Props) {
         }
       } else {
         try {
-          const current = p.getCurrentTime();
-          if (Math.abs(Number(current) - targetSeconds) > 1.25) {
+          const current = Number(p.getCurrentTime());
+          const drift = current - targetSeconds;
+          const absDrift = Math.abs(drift);
+
+          // Deadband drift correction for YouTube: playback-rate nudging isn't reliably supported
+          // (available rates are often limited to 0.25/0.5/1/1.5/2), so we use seek with cooldown.
+          if (absDrift > 2.0) {
             p.seekTo(targetSeconds, true);
+            lastSoftSeekAtRef.current = Date.now();
+          } else if (absDrift > 0.5) {
+            const last = lastSoftSeekAtRef.current;
+            if (!last || Date.now() - last > 4000) {
+              p.seekTo(targetSeconds, true);
+              lastSoftSeekAtRef.current = Date.now();
+            }
           }
         } catch {
           // ignore

@@ -9,18 +9,20 @@ import {
 } from "livekit-client";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+type TokenResponse =
+  | { ok: true; token: string; url: string; room: string }
+  | { ok: false; error: string };
+
 type Props = {
-  requestToken: () => Promise<
-    | { ok: true; token: string; url: string; room: string }
-    | { ok: false; error: string }
-  >;
+  roomId: string;
+  requestToken: (tableId: string) => Promise<TokenResponse>;
 };
 
 function participantDisplayName(p: Participant) {
   const name = (p.name || "").trim();
   if (name) return name;
   const id = (p.identity || "").trim();
-  if (!id) return "Guest";
+  if (!id) return "Student";
   if (id.length <= 14) return id;
   return `${id.slice(0, 8)}...${id.slice(-4)}`;
 }
@@ -138,37 +140,61 @@ function Tile(props: { participant: Participant; isLocal: boolean }) {
   );
 }
 
-export function StagePanel(props: Props) {
+export function TablePanel(props: Props) {
+  const storageKey = useMemo(() => `nt:table:${props.roomId}`, [props.roomId]);
+  const [tableId, setTableId] = useState(() => {
+    if (typeof window === "undefined") return "";
+    try {
+      return localStorage.getItem(storageKey) ?? "";
+    } catch {
+      return "";
+    }
+  });
+
   const [status, setStatus] = useState<
     | { type: "idle" }
     | { type: "connecting" }
-    | { type: "connected"; room: Room }
+    | { type: "connected"; room: Room; tableId: string }
     | { type: "error"; message: string }
   >({ type: "idle" });
-  const [, setRenderTick] = useState(0);
 
+  const [, setRenderTick] = useState(0);
   const roomRef = useRef<Room | null>(null);
 
   const connectedRoom = status.type === "connected" ? status.room : null;
-
-  // Stage is small (<= ~20), so simple re-rendering is fine.
   const participants = connectedRoom
     ? [connectedRoom.localParticipant, ...Array.from(connectedRoom.remoteParticipants.values())]
     : [];
 
   const join = useCallback(async () => {
     if (status.type === "connecting" || status.type === "connected") return;
+
+    const cleaned = String(tableId || "")
+      .trim()
+      .replace(/[^a-zA-Z0-9_-]/g, "")
+      .slice(0, 16);
+    if (!cleaned) {
+      setStatus({ type: "error", message: "Enter a table code (letters/numbers only)." });
+      return;
+    }
+
+    try {
+      localStorage.setItem(storageKey, cleaned);
+    } catch {
+      // ignore
+    }
+
     setStatus({ type: "connecting" });
 
-    const tokenRes = await props.requestToken();
+    const tokenRes = await props.requestToken(cleaned);
     if (!tokenRes.ok) {
       const msg =
         tokenRes.error === "livekit_not_configured"
-          ? "Stage is not configured yet (missing LiveKit env on the realtime server)."
-          : tokenRes.error === "stage_full"
-            ? "Stage is full. Try again later."
-            : tokenRes.error === "forbidden"
-              ? "You are not allowed to join the Stage in this room."
+          ? "Tables are not configured yet (missing LiveKit env on the realtime server)."
+          : tokenRes.error === "table_full"
+            ? "This table is full. Use a different code."
+            : tokenRes.error === "invalid_table"
+              ? "Invalid table code."
               : tokenRes.error;
       setStatus({ type: "error", message: msg });
       return;
@@ -193,7 +219,7 @@ export function StagePanel(props: Props) {
       room.on(RoomEvent.TrackMuted, rerender);
       room.on(RoomEvent.TrackUnmuted, rerender);
 
-      setStatus({ type: "connected", room });
+      setStatus({ type: "connected", room, tableId: cleaned });
       rerender();
     } catch (e: unknown) {
       try {
@@ -204,7 +230,7 @@ export function StagePanel(props: Props) {
       roomRef.current = null;
       setStatus({ type: "error", message: e instanceof Error ? e.message : String(e) });
     }
-  }, [props, status.type]);
+  }, [props, status.type, storageKey, tableId]);
 
   const leave = useCallback(() => {
     const room = roomRef.current;
@@ -248,38 +274,51 @@ export function StagePanel(props: Props) {
   return (
     <div className="nt-card p-4">
       <div className="flex items-center justify-between gap-3">
-        <div className="text-sm font-extrabold text-[var(--foreground)]">Stage</div>
-        <span className="nt-badge">LiveKit</span>
+        <div className="text-sm font-extrabold text-[var(--foreground)]">Tables</div>
+        <span className="nt-badge">Small Group</span>
       </div>
 
       <div className="mt-2 text-xs font-semibold text-[var(--muted)]">
-        Interactive camera + mic for a small number of speakers. For 10k rooms, most students stay in the Audience.
+        Join a table to talk with friends (up to a small group). Use the same code on all devices to join together.
       </div>
 
-      <div className="mt-3 flex flex-wrap items-center gap-2">
-        {status.type !== "connected" ? (
+      {status.type !== "connected" ? (
+        <div className="mt-3 flex items-center gap-2">
+          <input
+            value={tableId}
+            onChange={(e) => {
+              setTableId(e.target.value);
+              if (status.type === "error") setStatus({ type: "idle" });
+            }}
+            placeholder="Table code (e.g. 9A)"
+            className="nt-input h-11 w-full"
+            autoCapitalize="characters"
+          />
           <button
             className="nt-btn nt-btn-accent h-11 px-4"
             onClick={() => void join()}
             disabled={status.type === "connecting"}
-            title="Join Stage"
+            title="Join table"
           >
-            {status.type === "connecting" ? "Connecting..." : "Join Stage"}
+            {status.type === "connecting" ? "Joining..." : "Join"}
           </button>
-        ) : (
-          <>
-            <button className="nt-btn nt-btn-outline" onClick={() => void toggleCam()}>
-              {connectedRoom?.localParticipant.isCameraEnabled ? "Camera On" : "Camera Off"}
-            </button>
-            <button className="nt-btn nt-btn-outline" onClick={() => void toggleMic()}>
-              {connectedRoom?.localParticipant.isMicrophoneEnabled ? "Mic On" : "Mic Off"}
-            </button>
-            <button className="nt-btn nt-btn-outline ml-auto" onClick={leave}>
-              Leave
-            </button>
-          </>
-        )}
-      </div>
+        </div>
+      ) : (
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <span className="rounded-full bg-[var(--surface-2)] px-3 py-1 text-xs font-extrabold text-[var(--foreground)]">
+            Table: <span className="font-mono">{status.tableId}</span>
+          </span>
+          <button className="nt-btn nt-btn-outline" onClick={() => void toggleCam()}>
+            {connectedRoom?.localParticipant.isCameraEnabled ? "Camera On" : "Camera Off"}
+          </button>
+          <button className="nt-btn nt-btn-outline" onClick={() => void toggleMic()}>
+            {connectedRoom?.localParticipant.isMicrophoneEnabled ? "Mic On" : "Mic Off"}
+          </button>
+          <button className="nt-btn nt-btn-outline ml-auto" onClick={leave}>
+            Leave
+          </button>
+        </div>
+      )}
 
       {status.type === "error" ? (
         <div className="mt-3 rounded-[10px] border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-800">
@@ -293,11 +332,7 @@ export function StagePanel(props: Props) {
             <Tile key={p.sid} participant={p} isLocal={p.isLocal} />
           ))}
         </div>
-      ) : (
-        <div className="mt-3 rounded-[12px] border border-black/10 bg-white p-3 text-[11px] font-semibold text-[var(--muted)]">
-          Join to start your camera and speak with other Stage participants.
-        </div>
-      )}
+      ) : null}
     </div>
   );
 }
