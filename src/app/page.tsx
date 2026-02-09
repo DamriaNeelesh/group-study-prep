@@ -3,10 +3,10 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
-import { requireSupabaseBrowserClient } from "@/lib/supabase/client";
 import { useSupabaseAuth } from "@/hooks/useSupabaseAuth";
 import { SiteHeader } from "@/components/SiteHeader";
 import { Toast } from "@/components/Toast";
+import { lectureApi } from "@/lib/lectureApi";
 import {
   extractRoomIdFromInput,
   looksLikeShortRoomCode,
@@ -38,11 +38,8 @@ export default function HomePage() {
     setError(null);
     setBusy(true);
     try {
-      const supabase = requireSupabaseBrowserClient();
-      const id = crypto.randomUUID();
-      const { error } = await supabase.from("rooms").insert({ id });
-      if (error) throw error;
-      router.push(`/lecture/${id}`);
+      const room = await lectureApi.createRoom();
+      router.push(`/lecture/${room.room_id}`);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -62,7 +59,7 @@ export default function HomePage() {
       } else if (input.includes("/room/")) { // Old style
         id = input.split("/room/")[1].split("?")[0];
       }
-    } catch (e) { }
+    } catch { }
 
     id = extractRoomIdFromInput(id) || id;
 

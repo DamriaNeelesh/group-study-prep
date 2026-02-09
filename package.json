@@ -3,12 +3,20 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev --webpack",
-    "dev:web": "next dev --webpack",
+    "dev": "next dev -p 3000 --webpack",
+    "dev:web": "next dev -p 3000 --webpack",
+    "dev:lecture": "npm --prefix services/lecture-server run dev",
     "dev:realtime": "npm --prefix services/realtime run dev",
+    "docker:up": "cd infra && docker compose up -d --build",
+    "docker:up:realtime": "cd infra && docker compose --profile realtime up -d --build",
+    "docker:down": "cd infra && docker compose down",
+    "docker:logs": "cd infra && docker compose logs -f --tail=200",
     "build": "next build --webpack",
+    "build:lecture": "npm --prefix services/lecture-server run build",
     "build:realtime": "npm --prefix services/realtime run build",
-    "start": "next start",
+    "start": "next start -p 3000",
+    "start:lecture": "npm --prefix services/lecture-server run start",
+    "start:realtime": "npm --prefix services/realtime run start",
     "lint": "eslint"
   },
   "dependencies": {

@@ -1,6 +1,7 @@
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 
-const API_BASE = process.env.NEXT_PUBLIC_LECTURE_API_URL || "http://localhost:4000";
+// Default to 4001 to avoid colliding with the v2 realtime service (also defaults to 4000).
+const API_BASE = process.env.NEXT_PUBLIC_LECTURE_API_URL || "http://localhost:4001";
 
 async function getAuthHeaders(): Promise<HeadersInit> {
     const supabase = getSupabaseBrowserClient();

@@ -863,6 +863,7 @@ export function useRoomCall(args: {
     args.userId,
     closePeer,
     ensurePeer,
+    ensureLocalStream,
     flushPendingCandidates,
     send,
     supabase,

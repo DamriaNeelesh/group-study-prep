@@ -4,7 +4,8 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import { io, Socket } from "socket.io-client";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 
-const SOCKET_URL = process.env.NEXT_PUBLIC_LECTURE_API_URL || "http://localhost:4000";
+// Default to 4001 to avoid colliding with the v2 realtime service (also defaults to 4000).
+const SOCKET_URL = process.env.NEXT_PUBLIC_LECTURE_API_URL || "http://localhost:4001";
 
 export interface RoomState {
     hostId: string | null;
@@ -78,15 +79,12 @@ export function useLectureSocket(roomId: string | null) {
             setHandQueue(queue);
         });
 
-        socket.on("role:updated", ({ userId, newRole }: { userId: string; newRole: string }) => {
-            // Check if it's our role
-            getToken().then(async (token) => {
-                const supabase = getSupabaseBrowserClient();
-                const { data } = await supabase?.auth.getUser() ?? { data: null };
-                if (data?.user?.id === userId) {
-                    setMyRole(newRole as "host" | "speaker" | "audience");
-                }
-            });
+        socket.on("role:updated", async ({ userId, newRole }: { userId: string; newRole: string }) => {
+            const supabase = getSupabaseBrowserClient();
+            const { data } = await supabase?.auth.getUser() ?? { data: null };
+            if (data?.user?.id === userId) {
+                setMyRole(newRole as "host" | "speaker" | "audience");
+            }
         });
 
         socket.on("youtube:loaded", ({ videoId }: { videoId: string }) => {

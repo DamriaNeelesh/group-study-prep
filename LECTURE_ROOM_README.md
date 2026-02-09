@@ -1,162 +1,104 @@
 # Group Study Lecture Room
 
-A scalable lecture room platform supporting 10,000+ concurrent users with real-time video sync, LiveKit A/V conferencing, and role-based permissions.
+Lecture rooms backed by a Node.js server (REST + Socket.IO) with LiveKit for camera/mic.
 
-## 🏗️ Architecture
+Default local ports:
+- Frontend (Next.js): `http://localhost:3000`
+- Lecture server (REST + Socket.IO): `http://localhost:4001`
+- Optional v2 realtime service (Socket.IO + Redis Streams): `http://localhost:4000`
+- Redis: `6379`
 
-```
-┌─────────────┐     ┌─────────────────┐     ┌──────────────┐
-│   Next.js   │────>│  Lecture Server │────>│   Supabase   │
-│   Frontend  │     │ (Socket.IO+REST)│     │  (Auth + DB) │
-└─────────────┘     └────────┬────────┘     └──────────────┘
-       │                     │
-       │              ┌──────┴──────┐
-       └─────────────>│ LiveKit SFU │
-                      │   (A/V)     │
-                      └─────────────┘
-```
+## Quick Start (Local Dev)
 
-## 🚀 Quick Start
-
-### Prerequisites
-- Node.js 20+
-- Redis (for Socket.IO scaling)
-- LiveKit Cloud account
-- Supabase project
-
-### 1. Install Dependencies
+### 1. Install dependencies
 
 ```bash
-# Frontend
-npm install
-
-# Backend
-cd services/lecture-server
 npm install
 ```
 
-### 2. Set Up LiveKit Cloud
+### 2. Configure env
 
-1. Go to [LiveKit Cloud](https://cloud.livekit.io/)
-2. Create a new project
-3. Copy your credentials:
-   - **LIVEKIT_URL**: `wss://your-app.livekit.cloud`
-   - **LIVEKIT_API_KEY**: Your API key
-   - **LIVEKIT_API_SECRET**: Your API secret
+Frontend:
+- Copy `.env.example` to `.env.local` (or `.env`) and set:
+  - `NEXT_PUBLIC_SUPABASE_URL`
+  - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+  - `NEXT_PUBLIC_LECTURE_API_URL` (default `http://localhost:4001`)
 
-### 3. Configure Environment Variables
+Lecture server:
+- Copy `services/lecture-server/.env.example` to `services/lecture-server/.env`
+- Set `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`, and `SUPABASE_SERVICE_ROLE_KEY`
 
-**Frontend (.env)**:
-```env
-NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
-NEXT_PUBLIC_SUPABASE_ANON_KEY=your_anon_key
-NEXT_PUBLIC_LECTURE_API_URL=http://localhost:4000
-```
+Note: the lecture server currently has code fallbacks for secrets for local testing, but env vars still override.
 
-**Backend (services/lecture-server/.env)**:
-```env
-PORT=4000
-CLIENT_ORIGIN=http://localhost:3000
-REDIS_URL=redis://localhost:6379
-SUPABASE_URL=https://your-project.supabase.co
-SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
-LIVEKIT_URL=wss://your-app.livekit.cloud
-LIVEKIT_API_KEY=your_api_key
-LIVEKIT_API_SECRET=your_api_secret
-```
-
-### 4. Start Redis (Docker)
+### 3. Start Redis (optional but recommended)
 
 ```bash
 docker run -d -p 6379:6379 redis:7-alpine
 ```
 
-### 5. Run Development Servers
-
-```bash
-# Terminal 1: Frontend
-npm run dev
-
-# Terminal 2: Backend
-cd services/lecture-server
-npm run dev
-```
-
-## 📦 Project Structure
-
-```
-├── src/
-│   ├── components/
-│   │   └── LectureRoom.tsx    # Main lecture UI
-│   ├── hooks/
-│   │   └── useLectureSocket.ts # Socket.IO client
-│   └── lib/
-│       └── lectureApi.ts       # REST API client
-├── services/
-│   └── lecture-server/         # Node.js backend
-│       └── src/index.ts
-└── infra/
-    ├── docker-compose.yml
-    └── nginx.conf
-```
-
-## 🎬 Features
-
-### Roles
-- **Host**: Full control (video sync, promote/demote speakers)
-- **Speaker**: Can publish camera/mic (max 6)
-- **Audience**: Watch-only, can raise hand
-
-### YouTube Sync
-- Host controls playback (play, pause, seek, load)
-- Audience automatically syncs with drift correction
-- Late joiners catch up immediately
-
-### Raise Hand
-1. Audience clicks "Raise Hand"
-2. Host sees queue and approves
-3. User is promoted to speaker
-4. Camera/mic toggles appear
-
-## 🚢 Production Deployment
-
-### Docker Compose
+Or use Docker Compose (starts `redis` + `lecture-server`):
 
 ```bash
 cd infra
-docker-compose up -d
+docker compose up -d --build
 ```
 
-### Sticky Sessions (Required for Socket.IO)
+To also start the v2 realtime service:
 
-When running multiple server instances, you **must** configure sticky sessions at the load balancer. See `infra/nginx.conf` for `ip_hash` configuration.
+```bash
+cd infra
+docker compose --profile realtime up -d --build
+```
 
-## 📋 API Reference
+### 4. Run the app
 
-### REST Endpoints
+Terminal 1 (frontend):
+```bash
+npm run dev
+```
 
-| Method | Endpoint | Auth | Description |
-|--------|----------|------|-------------|
-| POST | `/api/rooms/create` | JWT | Create a new room |
-| POST | `/api/rooms/:id/join` | JWT | Join an existing room |
-| POST | `/api/livekit/token` | JWT | Get LiveKit token |
-| POST | `/api/livekit/promote` | Host | Promote to speaker |
-| POST | `/api/livekit/demote` | Host | Demote to audience |
+Terminal 2 (lecture server):
+```bash
+npm run dev:lecture
+```
 
-### Socket Events
+Optional Terminal 3 (v2 realtime service):
+```bash
+npm run dev:realtime
+```
 
-| Event | Direction | Description |
-|-------|-----------|-------------|
-| `room:join` | C→S | Join socket room |
-| `room:state` | S→C | Initial state |
-| `chat:send/message` | C↔S | Chat messaging |
-| `hand:raise/queue` | C↔S | Raise hand system |
-| `youtube:*` | C↔S | Playback sync |
-| `role:updated` | S→C | Role changes |
+Health checks:
+- Lecture server: `http://localhost:4001/api/health`
+- Realtime service (v2): `http://localhost:4000/healthz`
 
-## 🔒 Security Notes
+## Product Flow
 
-- LiveKit tokens are minted server-side only
-- Supabase RLS enforces room membership
-- Host-only actions verified on both client and server
-- Service role key never exposed to client
+1. Open `http://localhost:3000`
+2. Click "Create Room"
+3. In the room header, use "Invite" or "Copy Link" to share the room
+4. Others open the link and join
+5. Audience can "Raise Hand"
+6. Host approves raised hands; approved users become "Speaker" and can enable camera/mic
+
+## Troubleshooting
+
+### WebSocket error: `ws://localhost:4001/socket.io ... failed`
+
+This almost always means the lecture server is not running on `4001`.
+
+1. Start it with `npm run dev:lecture`
+2. Confirm the health endpoint works: `http://localhost:4001/api/health`
+
+### Console errors like `chrome-extension://invalid/ net::ERR_FAILED`
+
+Those are usually caused by a browser extension injecting a content script. Try Incognito (extensions disabled) or disable extensions temporarily.
+
+### Anonymous auth errors
+
+This app relies on Supabase Anonymous Auth for "guest" users. Enable it in Supabase Dashboard:
+Authentication -> Providers -> Anonymous -> Enable.
+
+## Production Notes
+
+- If you run multiple lecture-server instances behind a load balancer, you must use sticky sessions for Socket.IO long-polling fallback.
+  See `infra/nginx.conf` for an example `ip_hash` configuration.

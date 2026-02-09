@@ -1,48 +1,87 @@
 "use client";
 
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useEffect, useMemo, useState, useRef } from "react";
 import {
     LiveKitRoom,
-    VideoConference,
     RoomAudioRenderer,
-    useParticipants,
-    useLocalParticipant,
     useTracks,
+    ParticipantTile,
     TrackToggle,
     DisconnectButton,
 } from "@livekit/components-react";
-import { Track, RoomEvent } from "livekit-client";
+import { Track } from "livekit-client";
 import "@livekit/components-styles";
 
 import { useLectureSocket } from "@/hooks/useLectureSocket";
 import { lectureApi } from "@/lib/lectureApi";
-import { getSupabaseBrowserClient } from "@/lib/supabase/client";
+import { Toast } from "@/components/Toast";
 
 interface LectureRoomProps {
     roomId: string;
 }
 
+type WindowWithYT = Window & {
+    YT?: typeof YT;
+};
+
+function shortId(id: string) {
+    const trimmed = id.trim();
+    if (trimmed.length <= 14) return trimmed;
+    return `${trimmed.slice(0, 8)}...${trimmed.slice(-4)}`;
+}
+
 export function LectureRoom({ roomId }: LectureRoomProps) {
-    const [userId, setUserId] = useState<string | null>(null);
     const [livekitToken, setLivekitToken] = useState<string | null>(null);
     const [livekitUrl, setLivekitUrl] = useState<string | null>(null);
-    const [role, setRole] = useState<"host" | "speaker" | "audience">("audience");
-    const [canPublish, setCanPublish] = useState(false);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
+    const [toast, setToast] = useState<string | null>(null);
 
     // Socket.IO connection
-    const socket = useLectureSocket(roomId);
+    const {
+        isConnected,
+        roomState,
+        messages,
+        handQueue,
+        myRole,
+        setMyRole,
+        sendChat,
+        raiseHand,
+        youtubeLoad,
+        youtubePlay,
+        youtubePause,
+        youtubeSeek,
+        youtubeRate,
+    } = useLectureSocket(roomId);
 
-    // Get current user
-    useEffect(() => {
-        const supabase = getSupabaseBrowserClient();
-        supabase?.auth.getUser().then(({ data }) => {
-            if (data?.user) {
-                setUserId(data.user.id);
+    const role = myRole;
+    const canPublish = role === "host" || role === "speaker";
+
+    const roomLink = useMemo(() => {
+        if (typeof window === "undefined") return `/lecture/${roomId}`;
+        return `${window.location.origin}/lecture/${roomId}`;
+    }, [roomId]);
+
+    async function copy(text: string, okMessage: string) {
+        try {
+            await navigator.clipboard?.writeText(text);
+            setToast(okMessage);
+        } catch {
+            setToast("Copy failed");
+        }
+    }
+
+    async function shareRoom() {
+        try {
+            if (navigator.share) {
+                await navigator.share({ title: "Lecture Room", url: roomLink });
+                return;
             }
-        });
-    }, []);
+        } catch {
+            // ignore
+        }
+        await copy(roomLink, "Room link copied");
+    }
 
     // Join room and get LiveKit token
     useEffect(() => {
@@ -54,16 +93,14 @@ export function LectureRoom({ roomId }: LectureRoomProps) {
                 setError(null);
 
                 // Join room
-                const roomState = await lectureApi.joinRoom(roomId);
-                setRole(roomState.role);
-                socket.setMyRole(roomState.role);
+                const joined = await lectureApi.joinRoom(roomId);
+                setMyRole(joined.role);
 
                 // Get LiveKit token
                 const lkToken = await lectureApi.getLiveKitToken(roomId);
                 setLivekitToken(lkToken.token);
                 setLivekitUrl(lkToken.livekitUrl);
-                setCanPublish(lkToken.canPublish);
-                setRole(lkToken.role);
+                setMyRole(lkToken.role);
 
             } catch (err) {
                 setError(err instanceof Error ? err.message : "Failed to join room");
@@ -73,13 +110,7 @@ export function LectureRoom({ roomId }: LectureRoomProps) {
         }
 
         init();
-    }, [roomId]);
-
-    // Listen for role updates
-    useEffect(() => {
-        setRole(socket.myRole);
-        setCanPublish(socket.myRole === "host" || socket.myRole === "speaker");
-    }, [socket.myRole]);
+    }, [roomId, setMyRole]);
 
     if (loading) {
         return (
@@ -109,7 +140,7 @@ export function LectureRoom({ roomId }: LectureRoomProps) {
         <div className="flex h-screen flex-col bg-[#0a0a0f]">
             {/* Header */}
             <header className="flex h-14 items-center justify-between border-b border-white/10 bg-black/50 px-4">
-                <div className="flex items-center gap-3">
+                <div className="flex min-w-0 items-center gap-3">
                     <h1 className="text-lg font-bold text-white">Lecture Room</h1>
                     <span className={`rounded-full px-2 py-0.5 text-xs font-bold ${role === "host" ? "bg-purple-500/20 text-purple-400" :
                         role === "speaker" ? "bg-green-500/20 text-green-400" :
@@ -117,11 +148,37 @@ export function LectureRoom({ roomId }: LectureRoomProps) {
                         }`}>
                         {role.toUpperCase()}
                     </span>
+                    <span className="hidden sm:inline font-mono text-xs font-bold text-white/60">
+                        {shortId(roomId)}
+                    </span>
                 </div>
 
                 <div className="flex items-center gap-2 text-sm text-white/60">
-                    <span>{socket.roomState?.memberCount || 0} members</span>
-                    {socket.isConnected ? (
+                    <button
+                        onClick={() => void shareRoom()}
+                        className="inline-flex rounded-md bg-white/10 px-3 py-1.5 text-xs font-bold text-white hover:bg-white/15"
+                        title="Invite (share room link)"
+                    >
+                        Invite
+                    </button>
+                    <button
+                        onClick={() => void copy(roomLink, "Room link copied")}
+                        className="hidden sm:inline-flex rounded-md bg-white/10 px-3 py-1.5 text-xs font-bold text-white hover:bg-white/15"
+                        title="Copy room link"
+                    >
+                        Copy Link
+                    </button>
+                    <button
+                        onClick={() => void copy(roomId, "Room ID copied")}
+                        className="hidden sm:inline-flex rounded-md bg-white/10 px-3 py-1.5 text-xs font-bold text-white hover:bg-white/15"
+                        title="Copy room ID"
+                    >
+                        Copy ID
+                    </button>
+
+                    <span className="hidden sm:inline text-white/30">|</span>
+                    <span>{roomState?.memberCount || 0} members</span>
+                    {isConnected ? (
                         <span className="h-2 w-2 rounded-full bg-green-500" />
                     ) : (
                         <span className="h-2 w-2 rounded-full bg-red-500" />
@@ -134,15 +191,16 @@ export function LectureRoom({ roomId }: LectureRoomProps) {
                 {/* Left: Video player */}
                 <div className="flex-1 p-4">
                     <YouTubePlayer
-                        videoId={socket.roomState?.videoId || null}
-                        isPlaying={socket.roomState?.isPlaying || false}
-                        timeSec={socket.roomState?.timeSec || 0}
-                        playbackRate={socket.roomState?.playbackRate || 1}
+                        videoId={roomState?.videoId || null}
+                        isPlaying={roomState?.isPlaying || false}
+                        timeSec={roomState?.timeSec || 0}
+                        playbackRate={roomState?.playbackRate || 1}
                         isHost={role === "host"}
-                        onPlay={(t) => socket.youtubePlay(t)}
-                        onPause={(t) => socket.youtubePause(t)}
-                        onSeek={(t) => socket.youtubeSeek(t)}
-                        onLoad={(v) => socket.youtubeLoad(v)}
+                        onPlay={youtubePlay}
+                        onPause={youtubePause}
+                        onSeek={youtubeSeek}
+                        onRate={youtubeRate}
+                        onLoad={youtubeLoad}
                     />
                 </div>
 
@@ -154,15 +212,15 @@ export function LectureRoom({ roomId }: LectureRoomProps) {
                             serverUrl={livekitUrl}
                             token={livekitToken}
                             connect={true}
-                            audio={canPublish}
-                            video={canPublish}
+                            // Don't prompt for camera/mic on page load. Users opt-in via the toggles below.
+                            audio={false}
+                            video={false}
                             onDisconnected={() => console.log("[LiveKit] Disconnected")}
                         >
                             <StageGrid
                                 isHost={role === "host"}
                                 canPublish={canPublish}
-                                roomId={roomId}
-                                handQueue={socket.handQueue}
+                                handQueue={handQueue}
                                 onApprove={async (uid) => {
                                     await lectureApi.promoteUser(roomId, uid);
                                 }}
@@ -175,10 +233,10 @@ export function LectureRoom({ roomId }: LectureRoomProps) {
                     <div className="border-t border-white/10 p-3">
                         {role === "audience" && (
                             <button
-                                onClick={() => socket.raiseHand()}
+                                onClick={() => raiseHand()}
                                 className="w-full rounded-lg bg-yellow-500/20 px-4 py-2 text-sm font-bold text-yellow-400 hover:bg-yellow-500/30"
                             >
-                                ✋ Raise Hand
+                                Raise Hand
                             </button>
                         )}
                         {(role === "speaker" || role === "host") && canPublish && (
@@ -190,11 +248,13 @@ export function LectureRoom({ roomId }: LectureRoomProps) {
 
                     {/* Chat */}
                     <ChatPanel
-                        messages={socket.messages}
-                        onSend={socket.sendChat}
+                        messages={messages}
+                        onSend={sendChat}
                     />
                 </div>
             </div>
+
+            {toast ? <Toast message={toast} onDismiss={() => setToast(null)} /> : null}
         </div>
     );
 }
@@ -203,46 +263,76 @@ export function LectureRoom({ roomId }: LectureRoomProps) {
 function StageGrid({
     isHost,
     canPublish,
-    roomId,
     handQueue,
     onApprove,
 }: {
     isHost: boolean;
     canPublish: boolean;
-    roomId: string;
     handQueue: string[];
     onApprove: (userId: string) => void;
 }) {
-    const participants = useParticipants();
-    const { localParticipant } = useLocalParticipant();
-    const tracks = useTracks([Track.Source.Camera, Track.Source.Microphone]);
+    const cameraTracks = useTracks([{ source: Track.Source.Camera, withPlaceholder: true }], {
+        onlySubscribed: false,
+    });
 
-    // Filter to only speakers/host (those who can publish)
-    const speakers = participants.filter(p =>
-        p.permissions?.canPublish || p.identity === localParticipant?.identity
-    ).slice(0, 7); // Max 7 on stage (host + 6 speakers)
+    // Only show participants who are allowed to publish (host/speakers).
+    // Include local participant if they can publish, even before they turn on video.
+    const stageTracks = cameraTracks
+        .filter(
+            (t) =>
+                Boolean(t.participant.permissions?.canPublish) ||
+                (t.participant.isLocal && canPublish),
+        )
+        .slice(0, 7);
 
     return (
         <div className="flex h-full flex-col">
             <div className="border-b border-white/10 px-3 py-2">
-                <h3 className="text-sm font-bold text-white">Stage ({speakers.length})</h3>
+                <h3 className="text-sm font-bold text-white">Stage ({stageTracks.length})</h3>
             </div>
 
             {/* Video Grid */}
             <div className="flex-1 overflow-auto p-2">
-                <div className="grid grid-cols-2 gap-2">
-                    {speakers.map((participant: { identity: string }) => (
-                        <div key={participant.identity} className="relative aspect-video overflow-hidden rounded-lg bg-black">
-                            <VideoConference />
-                        </div>
-                    ))}
-                </div>
+                {stageTracks.length === 0 ? (
+                    <div className="flex h-full items-center justify-center rounded-lg border border-white/10 bg-black/20 p-3 text-center text-xs font-semibold text-white/60">
+                        No one is on stage yet.
+                    </div>
+                ) : (
+                    <div className="grid grid-cols-2 gap-2">
+                        {stageTracks.map((trackRef) => {
+                            const key =
+                                "publication" in trackRef && trackRef.publication
+                                    ? `${trackRef.participant.identity}:${trackRef.publication.trackSid}`
+                                    : `${trackRef.participant.identity}:${trackRef.source}:placeholder`;
+                            return (
+                                <ParticipantTile
+                                    key={key}
+                                    trackRef={trackRef}
+                                    className="aspect-video overflow-hidden rounded-lg bg-black"
+                                />
+                            );
+                        })}
+                    </div>
+                )}
 
                 {/* Controls for local participant */}
-                {canPublish && localParticipant && (
-                    <div className="mt-3 flex justify-center gap-2">
-                        <TrackToggle source={Track.Source.Camera} className="rounded-lg bg-white/10 px-3 py-2 text-sm text-white hover:bg-white/20" />
-                        <TrackToggle source={Track.Source.Microphone} className="rounded-lg bg-white/10 px-3 py-2 text-sm text-white hover:bg-white/20" />
+                {canPublish ? (
+                    <div className="mt-3 flex flex-wrap justify-center gap-2">
+                        <TrackToggle
+                            source={Track.Source.Camera}
+                            className="rounded-lg bg-white/10 px-3 py-2 text-sm font-bold text-white hover:bg-white/20"
+                        />
+                        <TrackToggle
+                            source={Track.Source.Microphone}
+                            className="rounded-lg bg-white/10 px-3 py-2 text-sm font-bold text-white hover:bg-white/20"
+                        />
+                        <DisconnectButton className="rounded-lg bg-white/10 px-3 py-2 text-sm font-bold text-white hover:bg-white/20">
+                            Leave A/V
+                        </DisconnectButton>
+                    </div>
+                ) : (
+                    <div className="mt-3 text-center text-[11px] font-semibold text-white/50">
+                        Audience can&apos;t publish camera/mic. Raise your hand to request speaker.
                     </div>
                 )}
             </div>
@@ -280,6 +370,7 @@ function YouTubePlayer({
     onPlay,
     onPause,
     onSeek,
+    onRate,
     onLoad,
 }: {
     videoId: string | null;
@@ -287,20 +378,41 @@ function YouTubePlayer({
     timeSec: number;
     playbackRate: number;
     isHost: boolean;
-    onPlay: (t: number) => void;
-    onPause: (t: number) => void;
-    onSeek: (t: number) => void;
-    onLoad: (v: string) => void;
+    onPlay: (t: number) => void | Promise<void>;
+    onPause: (t: number) => void | Promise<void>;
+    onSeek: (t: number) => void | Promise<void>;
+    onRate: (r: number) => void | Promise<void>;
+    onLoad: (v: string) => void | Promise<void>;
 }) {
     const playerRef = useRef<YT.Player | null>(null);
     const containerRef = useRef<HTMLDivElement>(null);
     const [inputVideoId, setInputVideoId] = useState("");
     const suppressEmit = useRef(false);
+    const latestRef = useRef({ isPlaying, timeSec, playbackRate });
+    const callbacksRef = useRef({ onPlay, onPause, onSeek, onRate });
+    const isHostRef = useRef(isHost);
+    const lastTimeRef = useRef(0);
+    const lastSeekEmitMsRef = useRef(0);
+    const lastRateEmitMsRef = useRef(0);
+    const playerStateRef = useRef<number | null>(null);
+
+    useEffect(() => {
+        latestRef.current = { isPlaying, timeSec, playbackRate };
+    }, [isPlaying, timeSec, playbackRate]);
+
+    useEffect(() => {
+        callbacksRef.current = { onPlay, onPause, onSeek, onRate };
+    }, [onPlay, onPause, onSeek, onRate]);
+
+    useEffect(() => {
+        isHostRef.current = isHost;
+    }, [isHost]);
 
     // Load YouTube IFrame API
     useEffect(() => {
         if (typeof window === "undefined") return;
-        if ((window as any).YT) return;
+        const w = window as WindowWithYT;
+        if (w.YT) return;
 
         const tag = document.createElement("script");
         tag.src = "https://www.youtube.com/iframe_api";
@@ -310,10 +422,11 @@ function YouTubePlayer({
     // Create player when videoId changes
     useEffect(() => {
         if (!videoId || !containerRef.current) return;
-        if (typeof (window as any).YT === "undefined") {
+        const w = window as WindowWithYT;
+        if (typeof w.YT === "undefined") {
             // Wait for API
             const interval = setInterval(() => {
-                if ((window as any).YT?.Player) {
+                if (w.YT?.Player) {
                     clearInterval(interval);
                     createPlayer();
                 }
@@ -324,12 +437,18 @@ function YouTubePlayer({
         }
 
         function createPlayer() {
+            const yt = w.YT;
+            if (!yt?.Player) return;
+            const el = containerRef.current;
+            if (!el) return;
+            const vid = videoId;
+            if (!vid) return;
             if (playerRef.current) {
                 playerRef.current.destroy();
             }
 
-            playerRef.current = new (window as any).YT.Player(containerRef.current, {
-                videoId,
+            playerRef.current = new yt.Player(el, {
+                videoId: vid,
                 playerVars: {
                     autoplay: 0,
                     controls: isHost ? 1 : 0,
@@ -337,31 +456,106 @@ function YouTubePlayer({
                     rel: 0,
                 },
                 events: {
-                    onReady: (e: any) => {
-                        e.target.seekTo(timeSec, true);
-                        if (isPlaying) e.target.playVideo();
-                        e.target.setPlaybackRate(playbackRate);
+                    onReady: (e: YT.PlayerEvent) => {
+                        const latest = latestRef.current;
+
+                        // Avoid echoing initial setup back into the room sync.
+                        suppressEmit.current = true;
+
+                        try {
+                            e.target.setPlaybackRate(latest.playbackRate);
+                        } catch {
+                            // ignore
+                        }
+                        try {
+                            e.target.seekTo(latest.timeSec, true);
+                        } catch {
+                            // ignore
+                        }
+
+                        if (latest.isPlaying) {
+                            e.target.playVideo();
+                        } else {
+                            e.target.pauseVideo();
+                        }
+
+                        lastTimeRef.current = latest.timeSec;
                     },
-                    onStateChange: (e: any) => {
-                        if (!isHost) return;
+                    onStateChange: (e: YT.OnStateChangeEvent) => {
+                        const state = e.data;
+                        playerStateRef.current = state;
+
+                        if (!isHostRef.current) return;
+
+                        const currentTime = e.target.getCurrentTime();
                         if (suppressEmit.current) {
                             suppressEmit.current = false;
+                            lastTimeRef.current = currentTime;
                             return;
                         }
 
-                        const state = e.data;
-                        const currentTime = e.target.getCurrentTime();
-
                         if (state === 1) { // Playing
-                            onPlay(currentTime);
-                        } else if (state === 2) { // Paused
-                            onPause(currentTime);
+                            lastTimeRef.current = currentTime;
+                            void callbacksRef.current.onPlay(currentTime);
+                            return;
                         }
+                        if (state === 2) { // Paused
+                            lastTimeRef.current = currentTime;
+                            void callbacksRef.current.onPause(currentTime);
+                            return;
+                        }
+
+                        // Buffering is a strong signal of a seek/scrub (esp. with native controls).
+                        if (state === 3) {
+                            const prev = lastTimeRef.current;
+                            const delta = Math.abs(currentTime - prev);
+                            lastTimeRef.current = currentTime;
+
+                            const now = Date.now();
+                            if (delta > 1.25 && now - lastSeekEmitMsRef.current > 800) {
+                                lastSeekEmitMsRef.current = now;
+                                void callbacksRef.current.onSeek(currentTime);
+                            }
+                        }
+                    },
+                    onPlaybackRateChange: (e: YT.OnPlaybackRateChangeEvent) => {
+                        if (!isHostRef.current) return;
+                        const now = Date.now();
+                        if (now - lastRateEmitMsRef.current < 600) return;
+                        lastRateEmitMsRef.current = now;
+                        void callbacksRef.current.onRate(e.data);
                     },
                 },
             });
         }
     }, [videoId, isHost]);
+
+    // Some seeks don't reliably trigger BUFFERING across browsers; poll for large jumps.
+    useEffect(() => {
+        if (!isHost) return;
+
+        const interval = setInterval(() => {
+            const p = playerRef.current;
+            if (!p) return;
+
+            const state = playerStateRef.current;
+            if (state !== 1 && state !== 2) return;
+
+            const currentTime = p.getCurrentTime();
+            const prev = lastTimeRef.current;
+            lastTimeRef.current = currentTime;
+
+            const delta = Math.abs(currentTime - prev);
+            const threshold = state === 1 ? 3.0 : 1.25;
+            const now = Date.now();
+            if (delta > threshold && now - lastSeekEmitMsRef.current > 800) {
+                lastSeekEmitMsRef.current = now;
+                void callbacksRef.current.onSeek(currentTime);
+            }
+        }, 700);
+
+        return () => clearInterval(interval);
+    }, [isHost]);
 
     // Sync playback state for audience
     useEffect(() => {
@@ -411,8 +605,9 @@ function YouTubePlayer({
                 ) : (
                     <div className="flex h-full items-center justify-center">
                         <div className="text-white/40 text-center">
-                            <div className="text-4xl mb-2">📺</div>
-                            <div>{isHost ? "Load a video to start" : "Waiting for host to load a video..."}</div>
+                            <div className="text-sm font-semibold">
+                                {isHost ? "Load a video to start" : "Waiting for host to load a video..."}
+                            </div>
                         </div>
                     </div>
                 )}

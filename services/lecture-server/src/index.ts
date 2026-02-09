@@ -1,4 +1,13 @@
-import "dotenv/config";
+import dotenv from "dotenv";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+// Load the lecture-server env file regardless of the current working directory.
+// This avoids accidentally picking up the monorepo root `.env` (which may use a different PORT).
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+dotenv.config({ path: path.resolve(__dirname, "../.env") });
+
 import express from "express";
 import { createServer } from "http";
 import { Server } from "socket.io";
@@ -9,17 +18,52 @@ import { Redis } from "ioredis";
 import { createAdapter } from "@socket.io/redis-adapter";
 
 // ============ CONFIG ============
-const PORT = parseInt(process.env.PORT || "4000", 10);
+// Default to 4001 to avoid colliding with the v2 realtime service (defaults to 4000).
+const PORT = parseInt(process.env.PORT || "4001", 10);
 const CLIENT_ORIGIN = process.env.CLIENT_ORIGIN || "http://localhost:3000";
-const REDIS_URL = "redis://127.0.0.1:6379";
-const SUPABASE_URL = "https://avtmohfcixlzriichofq.supabase.co";
-const SUPABASE_SERVICE_ROLE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImF2dG1vaGZjaXhsenJpaWNob2ZxIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3MDM3NzgyOSwiZXhwIjoyMDg1OTUzODI5fQ.Bw7zszpLR5G3PtlBKLJ-uxL2EIPHYuqSBApE_NRcxQU";
-const LIVEKIT_URL = "wss://study-room-0wty6g75.livekit.cloud";
-const LIVEKIT_API_KEY = "APIbX9NoYEYiDiL";
-const LIVEKIT_API_SECRET = "CZXBgwbaIeqbq9KsQCStLeofHg4Pa51Y6B64eCPSysyD";
+const REDIS_URL = process.env.REDIS_URL || "redis://127.0.0.1:6379";
+
+function mustEnv(name: string): string {
+    const v = process.env[name];
+    if (!v) {
+        throw new Error(`[Config] Missing required env: ${name}`);
+    }
+    return v;
+}
+
+// Secrets must come from env (usually `services/lecture-server/.env` for local dev).
+const SUPABASE_URL = mustEnv("SUPABASE_URL");
+const SUPABASE_SERVICE_ROLE_KEY = mustEnv("SUPABASE_SERVICE_ROLE_KEY");
+const LIVEKIT_URL = mustEnv("LIVEKIT_URL");
+const LIVEKIT_API_KEY = mustEnv("LIVEKIT_API_KEY");
+const LIVEKIT_API_SECRET = mustEnv("LIVEKIT_API_SECRET");
 
 // ============ CLIENTS ============
-const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+const supabaseAdmin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+    auth: {
+        persistSession: false,
+        autoRefreshToken: false,
+        detectSessionInUrl: false,
+    },
+});
+
+function createSupabaseUserClient(accessToken: string) {
+    // We still use the service role key as the API key (server-side), but we must send the
+    // end-user JWT as the Authorization header so PostgREST/RPC sees a real `auth.uid()`.
+    return createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+        auth: {
+            persistSession: false,
+            autoRefreshToken: false,
+            detectSessionInUrl: false,
+        },
+        global: {
+            headers: {
+                Authorization: `Bearer ${accessToken}`,
+            },
+        },
+    });
+}
+
 const livekit = new RoomServiceClient(
     LIVEKIT_URL.replace("wss://", "https://"),
     LIVEKIT_API_KEY,
@@ -78,14 +122,14 @@ let redisReady = false;
 // ============ AUTH MIDDLEWARE ============
 async function authenticateToken(
     authHeader: string | undefined
-): Promise<{ userId: string; email?: string } | null> {
+): Promise<{ userId: string; email?: string; accessToken: string } | null> {
     if (!authHeader?.startsWith("Bearer ")) return null;
     const token = authHeader.slice(7);
 
-    const { data, error } = await supabase.auth.getUser(token);
+    const { data, error } = await supabaseAdmin.auth.getUser(token);
     if (error || !data.user) return null;
 
-    return { userId: data.user.id, email: data.user.email };
+    return { userId: data.user.id, email: data.user.email, accessToken: token };
 }
 
 // ============ REST ENDPOINTS ============
@@ -101,6 +145,7 @@ app.post("/api/rooms/create", async (req, res) => {
         const auth = await authenticateToken(req.headers.authorization);
         if (!auth) return res.status(401).json({ error: "Unauthorized" });
 
+        const supabase = createSupabaseUserClient(auth.accessToken);
         const { roomId, initialVideoId } = req.body;
 
         // Call RPC
@@ -123,6 +168,7 @@ app.post("/api/rooms/:roomId/join", async (req, res) => {
         const auth = await authenticateToken(req.headers.authorization);
         if (!auth) return res.status(401).json({ error: "Unauthorized" });
 
+        const supabase = createSupabaseUserClient(auth.accessToken);
         const { roomId } = req.params;
 
         const { data, error } = await supabase.rpc("rpc_join_room", {
@@ -147,7 +193,7 @@ app.post("/api/livekit/token", async (req, res) => {
         if (!roomId) return res.status(400).json({ error: "roomId required" });
 
         // Get user's role
-        const { data: member, error } = await supabase
+        const { data: member, error } = await supabaseAdmin
             .from("room_participants")
             .select("role")
             .eq("room_id", roomId)
@@ -199,7 +245,7 @@ app.post("/api/livekit/promote", async (req, res) => {
         }
 
         // Verify caller is host (RPC will also verify)
-        const { data: room, error: roomError } = await supabase
+        const { data: room, error: roomError } = await supabaseAdmin
             .from("rooms")
             .select("host_user_id")
             .eq("id", roomId)
@@ -213,6 +259,7 @@ app.post("/api/livekit/promote", async (req, res) => {
         }
 
         // Update Supabase
+        const supabase = createSupabaseUserClient(auth.accessToken);
         const { error: rpcError } = await supabase.rpc("rpc_promote", {
             p_room_id: roomId,
             p_target_user: targetUserId,
@@ -255,7 +302,7 @@ app.post("/api/livekit/demote", async (req, res) => {
         }
 
         // Verify caller is host
-        const { data: room, error: roomError } = await supabase
+        const { data: room, error: roomError } = await supabaseAdmin
             .from("rooms")
             .select("host_user_id")
             .eq("id", roomId)
@@ -269,6 +316,7 @@ app.post("/api/livekit/demote", async (req, res) => {
         }
 
         // Update Supabase
+        const supabase = createSupabaseUserClient(auth.accessToken);
         const { error: rpcError } = await supabase.rpc("rpc_demote", {
             p_room_id: roomId,
             p_target_user: targetUserId,
@@ -326,13 +374,13 @@ io.on("connection", (socket) => {
         console.log(`[Socket] ${auth.userId} joined room:${roomId}`);
 
         // Get room state
-        const { data: room } = await supabase
+        const { data: room } = await supabaseAdmin
             .from("rooms")
             .select("*")
             .eq("id", roomId)
             .single();
 
-        const { data: members } = await supabase
+        const { data: members } = await supabaseAdmin
             .from("room_participants")
             .select("user_id, role")
             .eq("room_id", roomId);
@@ -361,7 +409,7 @@ io.on("connection", (socket) => {
         if (!auth) return;
 
         // Get display name
-        const { data: profile } = await supabase
+        const { data: profile } = await supabaseAdmin
             .from("profiles")
             .select("display_name")
             .eq("id", auth.userId)
@@ -377,7 +425,7 @@ io.on("connection", (socket) => {
         io.to(`room:${roomId}`).emit("chat:message", chatMessage);
 
         // Persist asynchronously
-        supabase
+        supabaseAdmin
             .from("chat_messages")
             .insert({ room_id: roomId, user_id: auth.userId, message })
             .then(() => { });
@@ -419,7 +467,7 @@ io.on("connection", (socket) => {
         if (!auth) return;
 
         // Verify host
-        const { data: room } = await supabase
+        const { data: room } = await supabaseAdmin
             .from("rooms")
             .select("host_user_id")
             .eq("id", roomId)
@@ -428,6 +476,7 @@ io.on("connection", (socket) => {
         if (room?.host_user_id !== auth.userId) return;
 
         // Update DB
+        const supabase = createSupabaseUserClient(auth.accessToken);
         await supabase.rpc("rpc_set_playback", {
             p_room_id: roomId,
             p_video_id: videoId,
@@ -446,7 +495,7 @@ io.on("connection", (socket) => {
         const auth = await authenticateToken(`Bearer ${token}`);
         if (!auth) return;
 
-        const { data: room } = await supabase
+        const { data: room } = await supabaseAdmin
             .from("rooms")
             .select("host_user_id")
             .eq("id", roomId)
@@ -454,6 +503,7 @@ io.on("connection", (socket) => {
 
         if (room?.host_user_id !== auth.userId) return;
 
+        const supabase = createSupabaseUserClient(auth.accessToken);
         await supabase.rpc("rpc_set_playback", {
             p_room_id: roomId,
             p_is_playing: true,
@@ -470,7 +520,7 @@ io.on("connection", (socket) => {
         const auth = await authenticateToken(`Bearer ${token}`);
         if (!auth) return;
 
-        const { data: room } = await supabase
+        const { data: room } = await supabaseAdmin
             .from("rooms")
             .select("host_user_id")
             .eq("id", roomId)
@@ -478,6 +528,7 @@ io.on("connection", (socket) => {
 
         if (room?.host_user_id !== auth.userId) return;
 
+        const supabase = createSupabaseUserClient(auth.accessToken);
         await supabase.rpc("rpc_set_playback", {
             p_room_id: roomId,
             p_is_playing: false,
@@ -494,7 +545,7 @@ io.on("connection", (socket) => {
         const auth = await authenticateToken(`Bearer ${token}`);
         if (!auth) return;
 
-        const { data: room } = await supabase
+        const { data: room } = await supabaseAdmin
             .from("rooms")
             .select("host_user_id")
             .eq("id", roomId)
@@ -502,6 +553,7 @@ io.on("connection", (socket) => {
 
         if (room?.host_user_id !== auth.userId) return;
 
+        const supabase = createSupabaseUserClient(auth.accessToken);
         await supabase.rpc("rpc_set_playback", {
             p_room_id: roomId,
             p_time_sec: timeSec,
@@ -517,7 +569,7 @@ io.on("connection", (socket) => {
         const auth = await authenticateToken(`Bearer ${token}`);
         if (!auth) return;
 
-        const { data: room } = await supabase
+        const { data: room } = await supabaseAdmin
             .from("rooms")
             .select("host_user_id")
             .eq("id", roomId)
@@ -525,6 +577,7 @@ io.on("connection", (socket) => {
 
         if (room?.host_user_id !== auth.userId) return;
 
+        const supabase = createSupabaseUserClient(auth.accessToken);
         await supabase.rpc("rpc_set_playback", {
             p_room_id: roomId,
             p_playback_rate: rate,
