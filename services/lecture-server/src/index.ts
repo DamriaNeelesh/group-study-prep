@@ -155,6 +155,28 @@ app.post("/api/rooms/create", async (req, res) => {
         });
 
         if (error) return res.status(400).json({ error: error.message });
+
+        // Ensure the creator is always recorded as a member (host).
+        // Some DB setups return "host" role but don't create the participant row reliably.
+        try {
+            const createdRoomId =
+                data && typeof data === "object" && "room_id" in data
+                    ? String((data as any).room_id)
+                    : null;
+            if (createdRoomId) {
+                await supabaseAdmin.from("room_participants").upsert(
+                    {
+                        room_id: createdRoomId,
+                        user_id: auth.userId,
+                        role: "host",
+                    },
+                    { onConflict: "room_id,user_id" }
+                );
+            }
+        } catch (e) {
+            console.warn("[/api/rooms/create] participant upsert failed:", e);
+        }
+
         res.json(data);
     } catch (err) {
         console.error("[/api/rooms/create]", err);
@@ -176,6 +198,32 @@ app.post("/api/rooms/:roomId/join", async (req, res) => {
         });
 
         if (error) return res.status(400).json({ error: error.message });
+
+        // Ensure membership row exists even if the RPC only returns a role.
+        try {
+            const joinedRoomId =
+                data && typeof data === "object" && "room_id" in data
+                    ? String((data as any).room_id)
+                    : roomId;
+            const role =
+                data && typeof data === "object" && "role" in data
+                    ? String((data as any).role)
+                    : "audience";
+
+            if (joinedRoomId) {
+                await supabaseAdmin.from("room_participants").upsert(
+                    {
+                        room_id: joinedRoomId,
+                        user_id: auth.userId,
+                        role,
+                    },
+                    { onConflict: "room_id,user_id" }
+                );
+            }
+        } catch (e) {
+            console.warn("[/api/rooms/:roomId/join] participant upsert failed:", e);
+        }
+
         res.json(data);
     } catch (err) {
         console.error("[/api/rooms/:roomId/join]", err);
@@ -193,15 +241,61 @@ app.post("/api/livekit/token", async (req, res) => {
         if (!roomId) return res.status(400).json({ error: "roomId required" });
 
         // Get user's role
-        const { data: member, error } = await supabaseAdmin
+        let { data: member, error } = await supabaseAdmin
             .from("room_participants")
             .select("role")
             .eq("room_id", roomId)
             .eq("user_id", auth.userId)
-            .single();
+            .maybeSingle();
 
+        // Self-heal: if membership isn't found, try to ensure it's created.
         if (error || !member) {
-            return res.status(403).json({ error: "Not a member of this room" });
+            // If the requester is the room host, upsert them as host.
+            const { data: room } = await supabaseAdmin
+                .from("rooms")
+                .select("host_user_id")
+                .eq("id", roomId)
+                .maybeSingle();
+
+            if (room?.host_user_id === auth.userId) {
+                await supabaseAdmin.from("room_participants").upsert(
+                    { room_id: roomId, user_id: auth.userId, role: "host" },
+                    { onConflict: "room_id,user_id" }
+                );
+            } else {
+                // Otherwise, run the join RPC using the user's JWT (so any RLS/capacity rules apply),
+                // then ensure the participant row exists.
+                const supabaseUser = createSupabaseUserClient(auth.accessToken);
+                const { data: joined, error: joinErr } = await supabaseUser.rpc("rpc_join_room", {
+                    p_room_id: roomId,
+                });
+
+                if (joinErr) {
+                    return res.status(403).json({ error: "Not a member of this room" });
+                }
+
+                const role =
+                    joined && typeof joined === "object" && "role" in joined
+                        ? String((joined as any).role)
+                        : "audience";
+                await supabaseAdmin.from("room_participants").upsert(
+                    { room_id: roomId, user_id: auth.userId, role },
+                    { onConflict: "room_id,user_id" }
+                );
+            }
+
+            // Re-fetch member after self-heal
+            const again = await supabaseAdmin
+                .from("room_participants")
+                .select("role")
+                .eq("room_id", roomId)
+                .eq("user_id", auth.userId)
+                .maybeSingle();
+            member = again.data;
+
+            if (!member) {
+                return res.status(403).json({ error: "Not a member of this room" });
+            }
         }
 
         const role = member.role as "host" | "speaker" | "audience";
