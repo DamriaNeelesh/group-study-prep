@@ -787,7 +787,16 @@ export function useRoomCall(args: {
         startOfferRef.current(fromPeerId);
       });
 
-    channel.subscribe(async (status) => {
+    channel.subscribe(async (status, err) => {
+      if (status === "CHANNEL_ERROR") {
+        console.error("[Realtime] Channel error:", err);
+        setState((s) => ({
+          ...s,
+          error: "Connection failed. Please check your internet or refresh.",
+        }));
+        return;
+      }
+
       setState((s) => ({ ...s, channel, isReady: false, error: null }));
       if (status !== "SUBSCRIBED") return;
 

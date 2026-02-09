@@ -417,14 +417,17 @@ export function RoomCall(props: {
   displayName: string;
 }) {
   const storageKey = useMemo(() => `nt:meet:joined:${props.roomId}`, [props.roomId]);
-  const [joined, setJoined] = useState(() => {
-    if (typeof window === "undefined") return false;
+  const [joined, setJoined] = useState(false);
+
+  useEffect(() => {
     try {
-      return localStorage.getItem(storageKey) === "1";
+      if (localStorage.getItem(storageKey) === "1") {
+        setJoined(true);
+      }
     } catch {
-      return false;
+      // ignore
     }
-  });
+  }, [storageKey]);
 
   if (!joined) {
     return (
