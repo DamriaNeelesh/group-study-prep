@@ -497,7 +497,19 @@ export function useRoomCall(args: {
         const already = remoteStream
           .getTracks()
           .some((t) => t.id === ev.track.id);
-        if (!already) remoteStream.addTrack(ev.track);
+        if (!already) {
+          remoteStream.addTrack(ev.track);
+
+          // Force a state update to ensure the UI re-renders with the new track
+          setState((s) => {
+            const nextStreams = s.remoteStreams.map((rs) =>
+              rs.peerId === remotePeerId
+                ? { ...rs, stream: new MediaStream(remoteStream.getTracks()) }
+                : rs
+            );
+            return { ...s, remoteStreams: nextStreams };
+          });
+        }
       };
 
       pc.onsignalingstatechange = () => {
@@ -778,6 +790,12 @@ export function useRoomCall(args: {
     channel.subscribe(async (status) => {
       setState((s) => ({ ...s, channel, isReady: false, error: null }));
       if (status !== "SUBSCRIBED") return;
+
+      // Ensure we have a local stream with at least a dummy video track
+      // BEFORE we track presence. This prevents peer connections from
+      // being created without any tracks to send.
+      ensureLocalStream();
+
       setState((s) => ({ ...s, isReady: true }));
       const meta = presenceMetaRef.current;
       if (meta) {
@@ -923,19 +941,30 @@ export function useRoomCall(args: {
       .map((p) => p.peerId)
       .filter((id) => id && id !== localPeerId);
 
+    // Create peer connections for new participants
     for (const remotePeerId of remotes) {
       if (!peersRef.current.has(remotePeerId)) {
+        // Create the peer connection immediately (this also adds it to the ref)
         void ensurePeer(remotePeerId).then((peer) => {
           if (!peer) return;
+
+          // Only initiate the offer if we are the designated initiator
+          // This prevents both sides from trying to create offers simultaneously
           if (isOfferInitiator(localPeerId, remotePeerId)) {
-            void startOffer(remotePeerId);
+            // Small delay to ensure the peer is fully set up
+            setTimeout(() => {
+              void startOffer(remotePeerId);
+            }, 100);
           }
         });
       }
     }
 
+    // Clean up peer connections for participants who left
     for (const existing of Array.from(peersRef.current.keys())) {
-      if (!remotes.includes(existing)) closePeer(existing);
+      if (!remotes.includes(existing)) {
+        closePeer(existing);
+      }
     }
   }, [closePeer, ensurePeer, startOffer, state.isReady, state.participants]);
 

@@ -79,7 +79,15 @@ async function verifyToken(args: {
   jwtSecret?: string;
   supabaseAdmin: SupabaseClient;
 }): Promise<{ userId: string; isAnonymous: boolean }> {
-  if (args.jwtSecret) return await verifySupabaseJwt({ token: args.token, jwtSecret: args.jwtSecret });
+  if (args.jwtSecret) {
+    try {
+      return await verifySupabaseJwt({ token: args.token, jwtSecret: args.jwtSecret });
+    } catch (e) {
+      // Local JWT verification is a performance optimization. If it fails (e.g. secret mismatch),
+      // fall back to Supabase Auth validation so we don't hard-brick the realtime service.
+      log.warn({ err: e }, "local JWT verify failed; falling back to supabase auth.getUser()");
+    }
+  }
 
   // Fallback (higher latency): ask Supabase Auth to validate token.
   const { data, error } = await args.supabaseAdmin.auth.getUser(args.token);

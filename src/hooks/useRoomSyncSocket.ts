@@ -162,7 +162,7 @@ export function useRoomSyncSocket(args: {
   displayName: string;
 }) {
   const supabase = useMemo(() => getSupabaseBrowserClient(), []);
-  const realtimeUrl = process.env.NEXT_PUBLIC_REALTIME_URL;
+  const realtimeUrl = (process.env.NEXT_PUBLIC_REALTIME_URL || "").trim();
   const missingEnvError = realtimeUrl
     ? null
     : "Missing env: NEXT_PUBLIC_REALTIME_URL (Socket sync backend URL)";
@@ -198,6 +198,7 @@ export function useRoomSyncSocket(args: {
   const socketRef = useRef<Socket | null>(null);
   const reconnectTimerRef = useRef<number | null>(null);
   const backoffMsRef = useRef<number>(1000);
+  const lastConnectErrorRef = useRef<string | null>(null);
 
   const actionTimersRef = useRef<Map<number, number>>(new Map());
   const lastAppliedSeqRef = useRef<number>(0);
@@ -352,6 +353,7 @@ export function useRoomSyncSocket(args: {
     socket.on("connect", () => {
       cleanupReconnectTimer();
       backoffMsRef.current = 1000;
+      lastConnectErrorRef.current = null;
       setState((s) => ({ ...s, connection: "connected", error: null }));
 
       void (async () => {
@@ -390,7 +392,12 @@ export function useRoomSyncSocket(args: {
     });
 
     socket.on("disconnect", () => {
-      setState((s) => ({ ...s, connection: "disconnected", isReady: false }));
+      setState((s) => ({
+        ...s,
+        connection: "disconnected",
+        isReady: false,
+        error: s.error ?? "Disconnected from realtime sync. Reconnecting...",
+      }));
       scheduleReconnect();
     });
 
@@ -398,10 +405,45 @@ export function useRoomSyncSocket(args: {
       const msg = isRecord(err)
         ? String(err.message || "")
         : String((err as { message?: unknown } | null)?.message ?? "");
+
       if (msg.startsWith("rate_limited:")) {
         const retry = Number(msg.split(":")[1] ?? 0);
+        const secs = Math.max(1, Math.ceil((Number.isFinite(retry) ? retry : 0) / 1000));
+        setState((s) => ({
+          ...s,
+          error: `Realtime sync rate-limited. Retrying in ~${secs}s...`,
+        }));
         scheduleReconnect(Number.isFinite(retry) ? retry : undefined);
         return;
+      }
+
+      // Make failures actionable: most "it doesn't work" reports are actually an unreachable backend URL,
+      // missing realtime server env, or Supabase auth not initialized yet.
+      const hint = (() => {
+        if (typeof window === "undefined") return null;
+        try {
+          const pageHost = window.location.hostname;
+          const rtHost = new URL(url).hostname;
+          const rtLooksLocal = rtHost === "localhost" || rtHost === "127.0.0.1";
+          const pageLooksLocal = pageHost === "localhost" || pageHost === "127.0.0.1";
+          if (rtLooksLocal && !pageLooksLocal) {
+            return `NEXT_PUBLIC_REALTIME_URL points to ${rtHost}, which won't work from a deployed site. Set it to your deployed realtime service URL.`;
+          }
+        } catch {
+          // ignore
+        }
+        return null;
+      })();
+
+      const nextErr =
+        hint ||
+        (msg.toLowerCase().includes("unauthorized")
+          ? "Realtime sync auth failed. Make sure Supabase anonymous auth is enabled and you are signed in."
+          : `Can't connect to realtime sync (${url}). Make sure the realtime service + Redis are running.`);
+
+      if (lastConnectErrorRef.current !== nextErr) {
+        lastConnectErrorRef.current = nextErr;
+        setState((s) => ({ ...s, error: nextErr }));
       }
       scheduleReconnect();
     });
