@@ -12,12 +12,14 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@livekit/components-react": "^2.9.19",
+    "@livekit/components-styles": "^1.2.0",
     "@supabase/supabase-js": "^2.95.3",
+    "livekit-client": "^2.17.1",
     "next": "16.1.6",
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "react-youtube": "^10.1.0",
-    "livekit-client": "^2.17.1",
     "socket.io-client": "^4.8.1",
     "socket.io-msgpack-parser": "^3.0.2",
     "zustand": "^5.0.8"
@@ -27,6 +29,7 @@
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "@types/youtube": "^0.1.0",
     "babel-plugin-react-compiler": "1.0.0",
     "eslint": "^9",
     "eslint-config-next": "16.1.6",
