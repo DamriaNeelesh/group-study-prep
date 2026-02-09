@@ -1,0 +1,63 @@
+services:
+  # Managed Redis (Render Key Value). Internal-only by default.
+  - type: keyvalue
+    name: studyroom-redis
+    plan: free
+    ipAllowList: []
+
+  # Lecture Server (REST + Socket.IO + LiveKit)
+  - type: web
+    name: studyroom-lecture-server
+    runtime: docker
+    plan: free
+    rootDir: services/lecture-server
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      # Comma-separated allowlist. Wildcards supported (e.g. https://*.vercel.app)
+      - key: CLIENT_ORIGIN
+        value: https://*.vercel.app,http://localhost:3000
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: studyroom-redis
+          property: connectionString
+      - key: SUPABASE_URL
+        value: https://avtmohfcixlzriichofq.supabase.co
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: LIVEKIT_URL
+        value: wss://study-room-0wty6g75.livekit.cloud
+      - key: LIVEKIT_API_KEY
+        sync: false
+      - key: LIVEKIT_API_SECRET
+        sync: false
+
+# Optional: StudyRoom v2 realtime service (Socket.IO + Redis Streams)
+# If you want to run it on Render, add it as another Docker web service:
+#
+#  - type: web
+#    name: studyroom-realtime
+#    runtime: docker
+#    plan: free
+#    rootDir: services/realtime
+#    dockerfilePath: ./Dockerfile
+#    dockerContext: .
+#    healthCheckPath: /healthz
+#    envVars:
+#      - key: NODE_ENV
+#        value: production
+#      - key: REDIS_URL
+#        fromService:
+#          type: keyvalue
+#          name: studyroom-redis
+#          property: connectionString
+#      - key: SUPABASE_URL
+#        value: https://avtmohfcixlzriichofq.supabase.co
+#      - key: SUPABASE_SERVICE_ROLE_KEY
+#        sync: false
+#      - key: SUPABASE_JWT_SECRET
+#        sync: false
