@@ -1,11 +1,9 @@
 "use client";
 
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { io, Socket } from "socket.io-client";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
-
-// Default to 4001 to avoid colliding with the v2 realtime service (also defaults to 4000).
-const SOCKET_URL = process.env.NEXT_PUBLIC_LECTURE_API_URL || "http://localhost:4001";
+import { getLectureApiBaseUrl } from "@/lib/lectureConfig";
 
 export interface RoomState {
     hostId: string | null;
@@ -28,6 +26,13 @@ export interface ChatMessage {
 export function useLectureSocket(roomId: string | null) {
     const socketRef = useRef<Socket | null>(null);
     const [isConnected, setIsConnected] = useState(false);
+
+    const socketUrl = useMemo(() => getLectureApiBaseUrl(), []);
+    const configError = socketUrl
+        ? null
+        : "Lecture API URL is missing or points to localhost. Set NEXT_PUBLIC_LECTURE_API_URL on Vercel to your deployed lecture-server URL and redeploy.";
+
+    const [connectionError, setConnectionError] = useState<string | null>(configError);
     const [roomState, setRoomState] = useState<RoomState | null>(null);
     const [messages, setMessages] = useState<ChatMessage[]>([]);
     const [handQueue, setHandQueue] = useState<string[]>([]);
@@ -42,8 +47,9 @@ export function useLectureSocket(roomId: string | null) {
 
     useEffect(() => {
         if (!roomId) return;
+        if (!socketUrl) return;
 
-        const socket = io(SOCKET_URL, {
+        const socket = io(socketUrl, {
             transports: ["websocket", "polling"],
             withCredentials: true,
         });
@@ -53,11 +59,17 @@ export function useLectureSocket(roomId: string | null) {
         socket.on("connect", async () => {
             console.log("[Socket] Connected");
             setIsConnected(true);
+            setConnectionError(null);
 
             const token = await getToken();
             if (token) {
                 socket.emit("room:join", { roomId, token });
             }
+        });
+
+        socket.on("connect_error", (err) => {
+            setConnectionError(err?.message || "Socket connection failed");
+            setIsConnected(false);
         });
 
         socket.on("disconnect", () => {
@@ -111,7 +123,7 @@ export function useLectureSocket(roomId: string | null) {
             socket.disconnect();
             socketRef.current = null;
         };
-    }, [roomId, getToken]);
+    }, [roomId, socketUrl, getToken]);
 
     // Actions
     const sendChat = useCallback(async (message: string) => {
@@ -154,6 +166,7 @@ export function useLectureSocket(roomId: string | null) {
 
     return {
         isConnected,
+        connectionError,
         roomState,
         messages,
         handQueue,

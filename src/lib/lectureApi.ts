@@ -1,7 +1,39 @@
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
+import { getLectureApiBaseUrl, getLectureApiBaseUrlOrThrow } from "@/lib/lectureConfig";
 
-// Default to 4001 to avoid colliding with the v2 realtime service (also defaults to 4000).
-const API_BASE = process.env.NEXT_PUBLIC_LECTURE_API_URL || "http://localhost:4001";
+async function fetchJson<T>(path: string, init: RequestInit): Promise<T> {
+    const base = getLectureApiBaseUrlOrThrow();
+
+    let res: Response;
+    try {
+        res = await fetch(`${base}${path}`, init);
+    } catch {
+        throw new Error(
+            `Cannot reach Lecture API at ${base}. ` +
+            "If you're on Vercel, set NEXT_PUBLIC_LECTURE_API_URL to your Render URL and redeploy. " +
+            "If you're local, ensure the lecture-server is running."
+        );
+    }
+
+    const text = await res.text();
+    const json = (() => {
+        try {
+            return text ? JSON.parse(text) : null;
+        } catch {
+            return null;
+        }
+    })();
+
+    if (!res.ok) {
+        const msg =
+            json && typeof json === "object" && typeof (json as { error?: unknown }).error === "string"
+                ? (json as { error: string }).error
+                : `Request failed (${res.status})`;
+        throw new Error(msg);
+    }
+
+    return (json as T) ?? ({} as T);
+}
 
 async function getAuthHeaders(): Promise<HeadersInit> {
     const supabase = getSupabaseBrowserClient();
@@ -33,72 +65,50 @@ export interface LiveKitTokenResponse {
 
 export const lectureApi = {
     async createRoom(roomId?: string, initialVideoId?: string): Promise<RoomState> {
-        const res = await fetch(`${API_BASE}/api/rooms/create`, {
+        // Extra guard to make misconfig obvious (common on Vercel).
+        const base = getLectureApiBaseUrl();
+        if (!base) {
+            throw new Error(
+                "Lecture API URL is missing or points to localhost. " +
+                "Set NEXT_PUBLIC_LECTURE_API_URL on Vercel to your Render lecture-server URL and redeploy."
+            );
+        }
+
+        return fetchJson<RoomState>("/api/rooms/create", {
             method: "POST",
             headers: await getAuthHeaders(),
             body: JSON.stringify({ roomId, initialVideoId }),
         });
-
-        if (!res.ok) {
-            const err = await res.json();
-            throw new Error(err.error || "Failed to create room");
-        }
-
-        return res.json();
     },
 
     async joinRoom(roomId: string): Promise<RoomState> {
-        const res = await fetch(`${API_BASE}/api/rooms/${roomId}/join`, {
+        return fetchJson<RoomState>(`/api/rooms/${roomId}/join`, {
             method: "POST",
             headers: await getAuthHeaders(),
         });
-
-        if (!res.ok) {
-            const err = await res.json();
-            throw new Error(err.error || "Failed to join room");
-        }
-
-        return res.json();
     },
 
     async getLiveKitToken(roomId: string): Promise<LiveKitTokenResponse> {
-        const res = await fetch(`${API_BASE}/api/livekit/token`, {
+        return fetchJson<LiveKitTokenResponse>("/api/livekit/token", {
             method: "POST",
             headers: await getAuthHeaders(),
             body: JSON.stringify({ roomId }),
         });
-
-        if (!res.ok) {
-            const err = await res.json();
-            throw new Error(err.error || "Failed to get LiveKit token");
-        }
-
-        return res.json();
     },
 
     async promoteUser(roomId: string, targetUserId: string): Promise<void> {
-        const res = await fetch(`${API_BASE}/api/livekit/promote`, {
+        await fetchJson("/api/livekit/promote", {
             method: "POST",
             headers: await getAuthHeaders(),
             body: JSON.stringify({ roomId, targetUserId }),
         });
-
-        if (!res.ok) {
-            const err = await res.json();
-            throw new Error(err.error || "Failed to promote user");
-        }
     },
 
     async demoteUser(roomId: string, targetUserId: string): Promise<void> {
-        const res = await fetch(`${API_BASE}/api/livekit/demote`, {
+        await fetchJson("/api/livekit/demote", {
             method: "POST",
             headers: await getAuthHeaders(),
             body: JSON.stringify({ roomId, targetUserId }),
         });
-
-        if (!res.ok) {
-            const err = await res.json();
-            throw new Error(err.error || "Failed to demote user");
-        }
     },
 };
