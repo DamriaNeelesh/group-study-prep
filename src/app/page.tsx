@@ -3,10 +3,10 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
-import { requireSupabaseBrowserClient } from "@/lib/supabase/client";
 import { useSupabaseAuth } from "@/hooks/useSupabaseAuth";
 import { SiteHeader } from "@/components/SiteHeader";
 import { Toast } from "@/components/Toast";
+import { lectureApi } from "@/lib/lectureApi";
 import {
   extractRoomIdFromInput,
   looksLikeShortRoomCode,
@@ -38,11 +38,8 @@ export default function HomePage() {
     setError(null);
     setBusy(true);
     try {
-      const supabase = requireSupabaseBrowserClient();
-      const id = crypto.randomUUID();
-      const { error } = await supabase.from("rooms").insert({ id });
-      if (error) throw error;
-      router.push(`/room/${id}`);
+      const room = await lectureApi.createRoom();
+      router.push(`/lecture/${room.room_id}`);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -54,18 +51,29 @@ export default function HomePage() {
     const input = roomId.trim();
     if (!input) return;
 
-    const id = extractRoomIdFromInput(input);
+    // Support full URLs like http://localhost:3000/lecture/uuid
+    let id = input;
+    try {
+      if (input.includes("/lecture/")) {
+        id = input.split("/lecture/")[1].split("?")[0];
+      } else if (input.includes("/room/")) { // Old style
+        id = input.split("/room/")[1].split("?")[0];
+      }
+    } catch { }
+
+    id = extractRoomIdFromInput(id) || id;
+
     if (!id) {
       setError(
         looksLikeShortRoomCode(input)
           ? "That looks like only the first 8 characters. Paste the full Room ID (UUID) or the full room link."
-          : "Please paste a full Room ID (UUID) or a full room link like /room/<uuid>.",
+          : "Please paste a full Room ID (UUID) or a full room link like /lecture/<uuid>.",
       );
       return;
     }
 
     setError(null);
-    router.push(`/room/${id}`);
+    router.push(`/lecture/${id}`);
   }
 
   return (

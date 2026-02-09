@@ -28,6 +28,7 @@ Copy `.env.example` to `.env.local` (or `.env`) and fill in:
 - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
 - (v2) `NEXT_PUBLIC_SYNC_BACKEND`
 - (v2) `NEXT_PUBLIC_REALTIME_URL`
+- (lecture) `NEXT_PUBLIC_LECTURE_API_URL` (defaults to `http://localhost:4001`)
 
 ## Dev
 
@@ -40,6 +41,14 @@ If using socket sync (v2), run the realtime service too:
 ```bash
 npm run dev:realtime
 ```
+
+If using Lecture rooms (LiveKit + Socket.IO backend), run the lecture server too:
+
+```bash
+npm run dev:lecture
+```
+
+More details: `LECTURE_ROOM_README.md`
 
 Open `http://localhost:3000`:
 - Create a room (generates a UUID and inserts into `public.rooms`)

@@ -1,0 +1,48 @@
+services:
+  # Redis for Socket.IO scaling
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes
+    restart: unless-stopped
+
+  # Lecture Server (Node.js + LiveKit)
+  lecture-server:
+    build:
+      context: ../services/lecture-server
+      dockerfile: Dockerfile
+    ports:
+      - "4001:4001"
+    env_file:
+      - ../services/lecture-server/.env
+    environment:
+      - PORT=4001
+      - CLIENT_ORIGIN=http://localhost:3000
+      - REDIS_URL=redis://redis:6379
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+  # StudyRoom v2 realtime service (Socket.IO + Redis Streams)
+  # Enable when needed: `docker compose --profile realtime up -d --build`
+  realtime:
+    profiles: ["realtime"]
+    build:
+      context: ../services/realtime
+      dockerfile: Dockerfile
+    ports:
+      - "4000:4000"
+    env_file:
+      - ../services/realtime/.env
+    environment:
+      - PORT=4000
+      - REDIS_URL=redis://redis:6379
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+volumes:
+  redis-data:
