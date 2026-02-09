@@ -27,8 +27,7 @@ Frontend:
 Lecture server:
 - Copy `services/lecture-server/.env.example` to `services/lecture-server/.env`
 - Set `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`, and `SUPABASE_SERVICE_ROLE_KEY`
-
-Note: the lecture server currently has code fallbacks for secrets for local testing, but env vars still override.
+- Set `CLIENT_ORIGIN` (CORS allowlist). It can be a comma-separated list and supports wildcards like `https://*.vercel.app`.
 
 ### 3. Start Redis (optional but recommended)
 
@@ -99,6 +98,25 @@ This app relies on Supabase Anonymous Auth for "guest" users. Enable it in Supab
 Authentication -> Providers -> Anonymous -> Enable.
 
 ## Production Notes
+
+- Your Vercel frontend must talk to a **public** lecture server URL (not `localhost`).
+- Set on Vercel (Project -> Settings -> Environment Variables):
+  - `NEXT_PUBLIC_LECTURE_API_URL=https://<your-lecture-server-domain>` (set for both Preview and Production)
+
+Lecture server deployment requirements:
+- Must support **WebSockets** (Socket.IO). Vercel Serverless Functions are not a good fit for long-lived Socket.IO connections.
+- Use a platform like Render / Railway / Fly.io / a VPS (Docker works well).
+
+Lecture server env in production:
+- `CLIENT_ORIGIN` must include your Vercel origin(s), for example:
+  - `CLIENT_ORIGIN=https://*.vercel.app,https://your-custom-domain.com`
+- Also set:
+  - `SUPABASE_URL`
+  - `SUPABASE_SERVICE_ROLE_KEY`
+  - `LIVEKIT_URL`
+  - `LIVEKIT_API_KEY`
+  - `LIVEKIT_API_SECRET`
+  - Optional: `REDIS_URL` (recommended if you plan to scale beyond 1 instance)
 
 - If you run multiple lecture-server instances behind a load balancer, you must use sticky sessions for Socket.IO long-polling fallback.
   See `infra/nginx.conf` for an example `ip_hash` configuration.

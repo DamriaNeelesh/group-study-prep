@@ -23,6 +23,40 @@ const PORT = parseInt(process.env.PORT || "4001", 10);
 const CLIENT_ORIGIN = process.env.CLIENT_ORIGIN || "http://localhost:3000";
 const REDIS_URL = process.env.REDIS_URL || "redis://127.0.0.1:6379";
 
+function normalizeOrigin(value: string) {
+    return value.trim().replace(/\/$/, "");
+}
+
+function matchOrigin(pattern: string, origin: string) {
+    const p = normalizeOrigin(pattern);
+    const o = normalizeOrigin(origin);
+
+    if (p === "*") return true;
+    if (!p.includes("*")) return p === o;
+
+    // Convert a simple wildcard pattern like `https://*.vercel.app` to a regex.
+    const escaped = p.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, "[^/]*");
+    const re = new RegExp(`^${escaped}$`);
+    return re.test(o);
+}
+
+const ALLOWED_ORIGINS = CLIENT_ORIGIN.split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+const corsOrigin = (
+    origin: string | undefined,
+    callback: (err: Error | null, allow?: boolean) => void
+) => {
+    // Non-browser requests (no Origin) are allowed.
+    if (!origin) return callback(null, true);
+
+    const allowed = ALLOWED_ORIGINS.some((p) => matchOrigin(p, origin));
+    if (allowed) return callback(null, true);
+
+    return callback(new Error(`Not allowed by CORS: ${origin}`));
+};
+
 function mustEnv(name: string): string {
     const v = process.env[name];
     if (!v) {
@@ -72,14 +106,25 @@ const livekit = new RoomServiceClient(
 
 // ============ EXPRESS ============
 const app = express();
-app.use(cors({ origin: CLIENT_ORIGIN, credentials: true }));
+app.use(
+    cors({
+        origin: corsOrigin,
+        credentials: true,
+        methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+        allowedHeaders: ["Content-Type", "Authorization"],
+    })
+);
 app.use(express.json());
 
 const httpServer = createServer(app);
 
 // ============ SOCKET.IO WITH REDIS ============
 const io = new Server(httpServer, {
-    cors: { origin: CLIENT_ORIGIN, credentials: true },
+    cors: {
+        origin: corsOrigin,
+        credentials: true,
+        methods: ["GET", "POST"],
+    },
     // Keep polling for compatibility; sticky sessions required at LB
     transports: ["polling", "websocket"],
 });
