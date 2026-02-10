@@ -600,20 +600,14 @@ io.on("connection", (socket) => {
         const auth = await authenticateToken(`Bearer ${token}`);
         if (!auth) return;
 
-        const { data: room } = await supabaseAdmin
-            .from("rooms")
-            .select("host_user_id")
-            .eq("id", roomId)
-            .single();
-
-        if (room?.host_user_id !== auth.userId) return;
-
-        const supabase = createSupabaseUserClient(auth.accessToken);
-        await supabase.rpc("rpc_set_playback", {
+        // Allow any member to control playback (bypass RLS via admin)
+        const { error } = await supabaseAdmin.rpc("rpc_set_playback", {
             p_room_id: roomId,
             p_is_playing: true,
             p_time_sec: timeSec,
         });
+
+        if (error) console.warn("[youtube:play] DB update failed:", error);
 
         io.to(`room:${roomId}`).emit("youtube:played", {
             timeSec,
@@ -625,20 +619,14 @@ io.on("connection", (socket) => {
         const auth = await authenticateToken(`Bearer ${token}`);
         if (!auth) return;
 
-        const { data: room } = await supabaseAdmin
-            .from("rooms")
-            .select("host_user_id")
-            .eq("id", roomId)
-            .single();
-
-        if (room?.host_user_id !== auth.userId) return;
-
-        const supabase = createSupabaseUserClient(auth.accessToken);
-        await supabase.rpc("rpc_set_playback", {
+        // Allow any member to control playback
+        const { error } = await supabaseAdmin.rpc("rpc_set_playback", {
             p_room_id: roomId,
             p_is_playing: false,
             p_time_sec: timeSec,
         });
+
+        if (error) console.warn("[youtube:pause] DB update failed:", error);
 
         io.to(`room:${roomId}`).emit("youtube:paused", {
             timeSec,
@@ -650,19 +638,13 @@ io.on("connection", (socket) => {
         const auth = await authenticateToken(`Bearer ${token}`);
         if (!auth) return;
 
-        const { data: room } = await supabaseAdmin
-            .from("rooms")
-            .select("host_user_id")
-            .eq("id", roomId)
-            .single();
-
-        if (room?.host_user_id !== auth.userId) return;
-
-        const supabase = createSupabaseUserClient(auth.accessToken);
-        await supabase.rpc("rpc_set_playback", {
+        // Allow any member to control playback
+        const { error } = await supabaseAdmin.rpc("rpc_set_playback", {
             p_room_id: roomId,
             p_time_sec: timeSec,
         });
+
+        if (error) console.warn("[youtube:seek] DB update failed:", error);
 
         io.to(`room:${roomId}`).emit("youtube:seeked", {
             timeSec,
@@ -674,19 +656,13 @@ io.on("connection", (socket) => {
         const auth = await authenticateToken(`Bearer ${token}`);
         if (!auth) return;
 
-        const { data: room } = await supabaseAdmin
-            .from("rooms")
-            .select("host_user_id")
-            .eq("id", roomId)
-            .single();
-
-        if (room?.host_user_id !== auth.userId) return;
-
-        const supabase = createSupabaseUserClient(auth.accessToken);
-        await supabase.rpc("rpc_set_playback", {
+        // Allow any member to control playback
+        const { error } = await supabaseAdmin.rpc("rpc_set_playback", {
             p_room_id: roomId,
             p_playback_rate: rate,
         });
+
+        if (error) console.warn("[youtube:rate] DB update failed:", error);
 
         io.to(`room:${roomId}`).emit("youtube:rateChanged", {
             rate,

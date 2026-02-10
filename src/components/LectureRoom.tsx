@@ -442,7 +442,7 @@ function YouTubePlayer({
                 videoId: vid,
                 playerVars: {
                     autoplay: 0,
-                    controls: isHost ? 1 : 0,
+                    controls: 1, // Allow everyone to control playback
                     modestbranding: 1,
                     rel: 0,
                 },
@@ -476,8 +476,6 @@ function YouTubePlayer({
                         const state = e.data;
                         playerStateRef.current = state;
 
-                        if (!isHostRef.current) return;
-
                         const currentTime = e.target.getCurrentTime();
                         if (suppressEmit.current) {
                             suppressEmit.current = false;
@@ -510,7 +508,6 @@ function YouTubePlayer({
                         }
                     },
                     onPlaybackRateChange: (e: YT.OnPlaybackRateChangeEvent) => {
-                        if (!isHostRef.current) return;
                         const now = Date.now();
                         if (now - lastRateEmitMsRef.current < 600) return;
                         lastRateEmitMsRef.current = now;
@@ -523,8 +520,6 @@ function YouTubePlayer({
 
     // Some seeks don't reliably trigger BUFFERING across browsers; poll for large jumps.
     useEffect(() => {
-        if (!isHost) return;
-
         const interval = setInterval(() => {
             const p = playerRef.current;
             if (!p) return;
@@ -546,24 +541,44 @@ function YouTubePlayer({
         }, 700);
 
         return () => clearInterval(interval);
-    }, [isHost]);
+    }, []);
 
-    // Sync playback state for audience
+    // Sync playback state for everyone (host included)
     useEffect(() => {
-        if (!playerRef.current || isHost) return;
+        if (!playerRef.current) return;
+
+        // If I am the one interacting, suppressEmit should be handled by the fact that
+        // socket events come back. But to be safe, when WE apply a change from Props (Server),
+        // we set suppressEmit = true so `onStateChange` triggers don't re-emit.
 
         suppressEmit.current = true;
 
         if (isPlaying) {
-            playerRef.current.seekTo(timeSec, true);
+            // Only seek if significantly different to avoid stutter?
+            // For now, trust the server state.
+            const current = playerRef.current.getCurrentTime();
+            if (Math.abs(current - timeSec) > 1.0) {
+                playerRef.current.seekTo(timeSec, true);
+            }
             playerRef.current.playVideo();
         } else {
             playerRef.current.pauseVideo();
-            playerRef.current.seekTo(timeSec, true);
+            // Don't seek repeatedly if paused, unless moved
+            const current = playerRef.current.getCurrentTime();
+            if (Math.abs(current - timeSec) > 1.0) {
+                playerRef.current.seekTo(timeSec, true);
+            }
         }
 
         playerRef.current.setPlaybackRate(playbackRate);
-    }, [isPlaying, timeSec, playbackRate, isHost]);
+
+        // Reset suppress after a short delay? No, onStateChange handles it.
+        // Actually, `onStateChange` checks `suppressEmit.current`. 
+        // We set it true here. When does it set false?
+        // It sets false inside `onStateChange`! 
+        // "if (suppressEmit.current) { suppressEmit.current = false; ... return; }"
+        // This is correct.
+    }, [isPlaying, timeSec, playbackRate]);
 
     return (
         <div className="flex flex-col h-full">
