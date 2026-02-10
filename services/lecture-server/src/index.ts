@@ -20,7 +20,18 @@ import { createAdapter } from "@socket.io/redis-adapter";
 // ============ CONFIG ============
 // Default to 4001 to avoid colliding with the v2 realtime service (defaults to 4000).
 const PORT = parseInt(process.env.PORT || "4001", 10);
-const CLIENT_ORIGIN = process.env.CLIENT_ORIGIN || "http://localhost:3000";
+// Parse CLIENT_ORIGIN: supports comma-separated origins and wildcard patterns (e.g. https://*.vercel.app).
+// Wildcards are converted to RegExp so the cors middleware matches them correctly.
+function parseOrigins(raw: string): string | (string | RegExp)[] {
+    const origins = raw.split(",").map((o) => o.trim()).filter(Boolean);
+    if (origins.length === 1 && !origins[0].includes("*")) return origins[0];
+    return origins.map((o) =>
+        o.includes("*")
+            ? new RegExp("^" + o.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*") + "$")
+            : o,
+    );
+}
+const CLIENT_ORIGIN = parseOrigins(process.env.CLIENT_ORIGIN || "http://localhost:3000");
 const REDIS_URL = process.env.REDIS_URL || "redis://127.0.0.1:6379";
 
 function mustEnv(name: string): string {
