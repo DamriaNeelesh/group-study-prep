@@ -187,9 +187,9 @@ export function LectureRoom({ roomId }: LectureRoomProps) {
             </header>
 
             {/* Main content */}
-            <div className="flex flex-1 overflow-hidden">
+            <div className="flex flex-1 flex-col lg:flex-row overflow-hidden">
                 {/* Left: Video player */}
-                <div className="flex-1 p-4">
+                <div className="flex-1 p-2 lg:p-4 min-h-[30vh] lg:min-h-0">
                     <YouTubePlayer
                         videoId={roomState?.videoId || null}
                         isPlaying={roomState?.isPlaying || false}
@@ -205,9 +205,9 @@ export function LectureRoom({ roomId }: LectureRoomProps) {
                 </div>
 
                 {/* Right: Stage + Chat */}
-                <div className="flex w-80 flex-col border-l border-white/10 bg-black/30">
+                <div className="flex w-full lg:w-80 flex-col border-t lg:border-t-0 lg:border-l border-white/10 bg-black/30 h-[60vh] lg:h-auto">
                     {/* Stage Grid (LiveKit) */}
-                    <div className="flex-1 overflow-hidden">
+                    <div className="flex-1 overflow-hidden min-h-0">
                         <LiveKitRoom
                             serverUrl={livekitUrl}
                             token={livekitToken}
@@ -230,7 +230,7 @@ export function LectureRoom({ roomId }: LectureRoomProps) {
                     </div>
 
                     {/* Raise Hand / Controls */}
-                    <div className="border-t border-white/10 p-3">
+                    <div className="border-t border-white/10 p-3 shrink-0">
                         {role === "audience" && (
                             <button
                                 onClick={() => raiseHand()}
@@ -247,10 +247,12 @@ export function LectureRoom({ roomId }: LectureRoomProps) {
                     </div>
 
                     {/* Chat */}
-                    <ChatPanel
-                        messages={messages}
-                        onSend={sendChat}
-                    />
+                    <div className="h-48 lg:h-auto lg:flex-1 min-h-[12rem] shrink-0 border-t border-white/10">
+                        <ChatPanel
+                            messages={messages}
+                            onSend={sendChat}
+                        />
+                    </div>
                 </div>
             </div>
 
@@ -320,14 +322,14 @@ function StageGrid({
                     <div className="mt-3 flex flex-wrap justify-center gap-2">
                         <TrackToggle
                             source={Track.Source.Camera}
-                            className="rounded-lg bg-white/10 px-3 py-2 text-sm font-bold text-white hover:bg-white/20"
+                            className="rounded-lg bg-blue-600 px-3 py-2 text-sm font-bold text-white hover:bg-blue-700 transition-colors"
                         />
                         <TrackToggle
                             source={Track.Source.Microphone}
-                            className="rounded-lg bg-white/10 px-3 py-2 text-sm font-bold text-white hover:bg-white/20"
+                            className="rounded-lg bg-purple-600 px-3 py-2 text-sm font-bold text-white hover:bg-purple-700 transition-colors"
                         />
-                        <DisconnectButton className="rounded-lg bg-white/10 px-3 py-2 text-sm font-bold text-white hover:bg-white/20">
-                            Leave A/V
+                        <DisconnectButton className="rounded-lg bg-red-600 px-3 py-2 text-sm font-bold text-white hover:bg-red-700 transition-colors">
+                            Leave
                         </DisconnectButton>
                     </div>
                 ) : (
