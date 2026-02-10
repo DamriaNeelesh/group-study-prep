@@ -8,6 +8,7 @@ import {
     ParticipantTile,
     TrackToggle,
     DisconnectButton,
+    useLocalParticipant,
 } from "@livekit/components-react";
 import { Track } from "livekit-client";
 import "@livekit/components-styles";
@@ -319,19 +320,7 @@ function StageGrid({
 
                 {/* Controls for local participant */}
                 {canPublish ? (
-                    <div className="mt-3 flex flex-wrap justify-center gap-2">
-                        <TrackToggle
-                            source={Track.Source.Camera}
-                            className="rounded-lg bg-blue-600 px-3 py-2 text-sm font-bold text-white hover:bg-blue-700 transition-colors"
-                        />
-                        <TrackToggle
-                            source={Track.Source.Microphone}
-                            className="rounded-lg bg-purple-600 px-3 py-2 text-sm font-bold text-white hover:bg-purple-700 transition-colors"
-                        />
-                        <DisconnectButton className="rounded-lg bg-red-600 px-3 py-2 text-sm font-bold text-white hover:bg-red-700 transition-colors">
-                            Leave
-                        </DisconnectButton>
-                    </div>
+                    <LocalControls />
                 ) : (
                     <div className="mt-3 text-center text-[11px] font-semibold text-white/50">
                         Audience can&apos;t publish camera/mic. Raise your hand to request speaker.
@@ -684,6 +673,37 @@ function ChatPanel({
                     </button>
                 </form>
             </div>
+        </div>
+    );
+}
+
+// ============ LOCAL CONTROLS ============
+function LocalControls() {
+    const { localParticipant, isMicrophoneEnabled, isCameraEnabled } = useLocalParticipant();
+
+    // Fallback if hook doesn't return flags directly in this version
+    const camOn = isCameraEnabled ?? localParticipant?.isCameraEnabled ?? false;
+    const micOn = isMicrophoneEnabled ?? localParticipant?.isMicrophoneEnabled ?? false;
+
+    return (
+        <div className="mt-3 flex flex-wrap justify-center gap-2">
+            <button
+                onClick={() => localParticipant?.setCameraEnabled(!camOn)}
+                className={`rounded-lg px-4 py-2 text-sm font-bold text-white transition-colors ${camOn ? "bg-blue-600 hover:bg-blue-700" : "bg-gray-700 hover:bg-gray-600"
+                    }`}
+            >
+                {camOn ? "Cam On" : "Cam Off"}
+            </button>
+            <button
+                onClick={() => localParticipant?.setMicrophoneEnabled(!micOn)}
+                className={`rounded-lg px-4 py-2 text-sm font-bold text-white transition-colors ${micOn ? "bg-purple-600 hover:bg-purple-700" : "bg-gray-700 hover:bg-gray-600"
+                    }`}
+            >
+                {micOn ? "Mic On" : "Mic Off"}
+            </button>
+            <DisconnectButton className="rounded-lg bg-red-600 px-4 py-2 text-sm font-bold text-white hover:bg-red-700 transition-colors">
+                Leave
+            </DisconnectButton>
         </div>
     );
 }
