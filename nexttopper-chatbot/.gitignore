@@ -1,0 +1,13 @@
+node_modules/
+dist/
+.turbo/
+.cache/
+.DS_Store
+
+.env
+.env.*
+!.env.example
+
+playwright-report/
+test-results/
+

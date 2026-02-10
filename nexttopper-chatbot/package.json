@@ -1,0 +1,23 @@
+{
+  "name": "nexttopper-chatbot",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@10.26.0",
+  "scripts": {
+    "dev": "pnpm -r dev",
+    "build": "pnpm -r build",
+    "test": "pnpm -r test",
+    "e2e": "pnpm --filter demo e2e",
+    "typecheck": "pnpm -r typecheck",
+    "supabase:bootstrap": "node scripts/supabase-bootstrap.mjs"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": ""
+}
