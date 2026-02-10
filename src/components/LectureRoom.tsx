@@ -228,71 +228,89 @@ export function LectureRoom({ roomId }: LectureRoomProps) {
 
 
 
-            {/* Right: Stage + Chat */}
-            <div className="flex w-full lg:w-80 flex-col border-t lg:border-t-0 lg:border-l border-white/10 bg-black/30 h-[60vh] lg:h-auto">
-                {/* Stage Grid (LiveKit) */}
-                <div className="flex-1 overflow-hidden min-h-0">
-                    <LiveKitRoom
-                        serverUrl={livekitUrl}
-                        token={livekitToken}
-                        connect={true}
-                        // Don't prompt for camera/mic on page load. Users opt-in via the toggles below.
-                        audio={false}
-                        video={false}
-                        onDisconnected={() => console.log("[LiveKit] Disconnected")}
-                    >
-                        <StageGrid
-                            isHost={role === "host"}
-                            canPublish={canPublish}
-                            handQueue={handQueue}
-                            onApprove={async (uid) => {
-                                await lectureApi.promoteUser(roomId, uid);
-                            }}
-                        />
-                        <RoomAudioRenderer />
-                    </LiveKitRoom>
-                </div>
-
-                {/* Raise Hand / Controls */}
-                <div className="border-t border-white/10 p-3 shrink-0">
-                    {role === "audience" && (
-                        <button
-                            onClick={() => raiseHand()}
-                            className="w-full rounded-lg bg-yellow-500/20 px-4 py-2 text-sm font-bold text-yellow-400 hover:bg-yellow-500/30"
-                        >
-                            Raise Hand
-                        </button>
-                    )}
-                    {(role === "speaker" || role === "host") && canPublish && (
-                        <div className="text-center text-sm text-white/60">
-                            You can turn on your camera/mic
-                        </div>
-                    )}
-                </div>
-
-                {/* Chat */}
-                <div className="h-48 lg:h-auto lg:flex-1 min-h-[12rem] shrink-0 border-t border-white/10">
-                    <ChatPanel
-                        messages={messages}
-                        onSend={sendChat}
+            {/* Main content */}
+            <div className="flex flex-1 flex-col lg:flex-row overflow-hidden">
+                {/* Left: Video player */}
+                <div className="flex-1 p-0 lg:p-0 min-h-[30vh] lg:min-h-0 bg-black flex flex-col justify-center">
+                    <YouTubePlayer
+                        videoId={roomState?.videoId || null}
+                        isPlaying={roomState?.isPlaying || false}
+                        timeSec={roomState?.timeSec || 0}
+                        playbackRate={roomState?.playbackRate || 1}
+                        isHost={role === "host"}
+                        onPlay={youtubePlay}
+                        onPause={youtubePause}
+                        onSeek={youtubeSeek}
+                        onRate={youtubeRate}
+                        onLoad={youtubeLoad}
                     />
                 </div>
+
+                {/* Right: Stage + Chat */}
+                <div className="flex w-full lg:w-80 flex-col border-t lg:border-t-0 lg:border-l border-white/10 bg-black/30 h-[60vh] lg:h-auto">
+                    {/* Stage Grid (LiveKit) */}
+                    <div className="flex-1 overflow-hidden min-h-0">
+                        <LiveKitRoom
+                            serverUrl={livekitUrl}
+                            token={livekitToken}
+                            connect={true}
+                            // Don't prompt for camera/mic on page load. Users opt-in via the toggles below.
+                            audio={false}
+                            video={false}
+                            onDisconnected={() => console.log("[LiveKit] Disconnected")}
+                        >
+                            <StageGrid
+                                isHost={role === "host"}
+                                canPublish={canPublish}
+                                handQueue={handQueue}
+                                onApprove={async (uid) => {
+                                    await lectureApi.promoteUser(roomId, uid);
+                                }}
+                            />
+                            <RoomAudioRenderer />
+                        </LiveKitRoom>
+                    </div>
+
+                    {/* Raise Hand / Controls */}
+                    <div className="border-t border-white/10 p-3 shrink-0">
+                        {role === "audience" && (
+                            <button
+                                onClick={() => raiseHand()}
+                                className="w-full rounded-lg bg-yellow-500/20 px-4 py-2 text-sm font-bold text-yellow-400 hover:bg-yellow-500/30"
+                            >
+                                Raise Hand
+                            </button>
+                        )}
+                        {(role === "speaker" || role === "host") && canPublish && (
+                            <div className="text-center text-sm text-white/60">
+                                You can turn on your camera/mic
+                            </div>
+                        )}
+                    </div>
+
+                    {/* Chat */}
+                    <div className="h-48 lg:h-auto lg:flex-1 min-h-[12rem] shrink-0 border-t border-white/10">
+                        <ChatPanel
+                            messages={messages}
+                            onSend={sendChat}
+                        />
+                    </div>
+                </div>
             </div>
-        </div>
 
-            { toast ? <Toast message={toast} onDismiss={() => setToast(null)} /> : null }
+            {toast ? <Toast message={toast} onDismiss={() => setToast(null)} /> : null}
 
-    {
-        showNameModal && userId && (
-            <GuestNameModal
-                userId={userId}
-                onSubmit={async () => {
-                    setShowNameModal(false);
-                    await joinRoomSequence();
-                }}
-            />
-        )
-    }
+            {
+                showNameModal && userId && (
+                    <GuestNameModal
+                        userId={userId}
+                        onSubmit={async () => {
+                            setShowNameModal(false);
+                            await joinRoomSequence();
+                        }}
+                    />
+                )
+            }
         </div >
     );
 }
