@@ -15,6 +15,7 @@ import "@livekit/components-styles";
 
 import { useLectureSocket } from "@/hooks/useLectureSocket";
 import { lectureApi } from "@/lib/lectureApi";
+import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { Toast } from "@/components/Toast";
 
 interface LectureRoomProps {
@@ -37,6 +38,8 @@ export function LectureRoom({ roomId }: LectureRoomProps) {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [toast, setToast] = useState<string | null>(null);
+    const [showNameModal, setShowNameModal] = useState(false);
+    const [userId, setUserId] = useState<string | null>(null);
 
     // Socket.IO connection
     const {
@@ -88,30 +91,66 @@ export function LectureRoom({ roomId }: LectureRoomProps) {
     useEffect(() => {
         if (!roomId) return;
 
+        const supabase = getSupabaseBrowserClient();
+
         async function init() {
             try {
                 setLoading(true);
                 setError(null);
 
-                // Join room
-                const joined = await lectureApi.joinRoom(roomId);
-                setMyRole(joined.role);
+                // 1. Check Auth & Profile
+                const { data: { user } } = await supabase.auth.getUser();
+                if (!user) {
+                    // Anonymous or not logged in? 
+                    // If we allow anon, they have a user object still? 
+                    // Supabase anon auth gives a user.
+                    // If not, maybe redirect? Assuming middleware handles it or we rely on anon.
+                }
 
-                // Get LiveKit token
-                const lkToken = await lectureApi.getLiveKitToken(roomId);
-                setLivekitToken(lkToken.token);
-                setLivekitUrl(lkToken.livekitUrl);
-                setMyRole(lkToken.role);
+                if (user) {
+                    setUserId(user.id);
+                    const { data: profile } = await supabase
+                        .from("profiles")
+                        .select("display_name")
+                        .eq("id", user.id)
+                        .single();
+
+                    if (!profile?.display_name) {
+                        setLoading(false);
+                        setShowNameModal(true);
+                        return; // Wait for name
+                    }
+                }
+
+                await joinRoomSequence();
 
             } catch (err) {
                 setError(err instanceof Error ? err.message : "Failed to join room");
-            } finally {
                 setLoading(false);
             }
         }
 
         init();
     }, [roomId, setMyRole]);
+
+    async function joinRoomSequence() {
+        try {
+            setLoading(true);
+            // Join room
+            const joined = await lectureApi.joinRoom(roomId);
+            setMyRole(joined.role);
+
+            // Get LiveKit token
+            const lkToken = await lectureApi.getLiveKitToken(roomId);
+            setLivekitToken(lkToken.token);
+            setLivekitUrl(lkToken.livekitUrl);
+            setMyRole(lkToken.role);
+        } catch (err) {
+            setError(err instanceof Error ? err.message : "Failed to join room");
+        } finally {
+            setLoading(false);
+        }
+    }
 
     if (loading) {
         return (
@@ -187,77 +226,138 @@ export function LectureRoom({ roomId }: LectureRoomProps) {
                 </div>
             </header>
 
-            {/* Main content */}
-            <div className="flex flex-1 flex-col lg:flex-row overflow-hidden">
-                {/* Left: Video player */}
-                <div className="flex-1 p-2 lg:p-4 min-h-[30vh] lg:min-h-0">
-                    <YouTubePlayer
-                        videoId={roomState?.videoId || null}
-                        isPlaying={roomState?.isPlaying || false}
-                        timeSec={roomState?.timeSec || 0}
-                        playbackRate={roomState?.playbackRate || 1}
-                        isHost={role === "host"}
-                        onPlay={youtubePlay}
-                        onPause={youtubePause}
-                        onSeek={youtubeSeek}
-                        onRate={youtubeRate}
-                        onLoad={youtubeLoad}
+
+
+            {/* Right: Stage + Chat */}
+            <div className="flex w-full lg:w-80 flex-col border-t lg:border-t-0 lg:border-l border-white/10 bg-black/30 h-[60vh] lg:h-auto">
+                {/* Stage Grid (LiveKit) */}
+                <div className="flex-1 overflow-hidden min-h-0">
+                    <LiveKitRoom
+                        serverUrl={livekitUrl}
+                        token={livekitToken}
+                        connect={true}
+                        // Don't prompt for camera/mic on page load. Users opt-in via the toggles below.
+                        audio={false}
+                        video={false}
+                        onDisconnected={() => console.log("[LiveKit] Disconnected")}
+                    >
+                        <StageGrid
+                            isHost={role === "host"}
+                            canPublish={canPublish}
+                            handQueue={handQueue}
+                            onApprove={async (uid) => {
+                                await lectureApi.promoteUser(roomId, uid);
+                            }}
+                        />
+                        <RoomAudioRenderer />
+                    </LiveKitRoom>
+                </div>
+
+                {/* Raise Hand / Controls */}
+                <div className="border-t border-white/10 p-3 shrink-0">
+                    {role === "audience" && (
+                        <button
+                            onClick={() => raiseHand()}
+                            className="w-full rounded-lg bg-yellow-500/20 px-4 py-2 text-sm font-bold text-yellow-400 hover:bg-yellow-500/30"
+                        >
+                            Raise Hand
+                        </button>
+                    )}
+                    {(role === "speaker" || role === "host") && canPublish && (
+                        <div className="text-center text-sm text-white/60">
+                            You can turn on your camera/mic
+                        </div>
+                    )}
+                </div>
+
+                {/* Chat */}
+                <div className="h-48 lg:h-auto lg:flex-1 min-h-[12rem] shrink-0 border-t border-white/10">
+                    <ChatPanel
+                        messages={messages}
+                        onSend={sendChat}
                     />
                 </div>
+            </div>
+        </div>
 
-                {/* Right: Stage + Chat */}
-                <div className="flex w-full lg:w-80 flex-col border-t lg:border-t-0 lg:border-l border-white/10 bg-black/30 h-[60vh] lg:h-auto">
-                    {/* Stage Grid (LiveKit) */}
-                    <div className="flex-1 overflow-hidden min-h-0">
-                        <LiveKitRoom
-                            serverUrl={livekitUrl}
-                            token={livekitToken}
-                            connect={true}
-                            // Don't prompt for camera/mic on page load. Users opt-in via the toggles below.
-                            audio={false}
-                            video={false}
-                            onDisconnected={() => console.log("[LiveKit] Disconnected")}
-                        >
-                            <StageGrid
-                                isHost={role === "host"}
-                                canPublish={canPublish}
-                                handQueue={handQueue}
-                                onApprove={async (uid) => {
-                                    await lectureApi.promoteUser(roomId, uid);
-                                }}
-                            />
-                            <RoomAudioRenderer />
-                        </LiveKitRoom>
-                    </div>
+            { toast ? <Toast message={toast} onDismiss={() => setToast(null)} /> : null }
 
-                    {/* Raise Hand / Controls */}
-                    <div className="border-t border-white/10 p-3 shrink-0">
-                        {role === "audience" && (
-                            <button
-                                onClick={() => raiseHand()}
-                                className="w-full rounded-lg bg-yellow-500/20 px-4 py-2 text-sm font-bold text-yellow-400 hover:bg-yellow-500/30"
-                            >
-                                Raise Hand
-                            </button>
-                        )}
-                        {(role === "speaker" || role === "host") && canPublish && (
-                            <div className="text-center text-sm text-white/60">
-                                You can turn on your camera/mic
-                            </div>
-                        )}
-                    </div>
+    {
+        showNameModal && userId && (
+            <GuestNameModal
+                userId={userId}
+                onSubmit={async () => {
+                    setShowNameModal(false);
+                    await joinRoomSequence();
+                }}
+            />
+        )
+    }
+        </div >
+    );
+}
 
-                    {/* Chat */}
-                    <div className="h-48 lg:h-auto lg:flex-1 min-h-[12rem] shrink-0 border-t border-white/10">
-                        <ChatPanel
-                            messages={messages}
-                            onSend={sendChat}
+// ============ GUEST NAME MODAL ============
+interface GuestNameModalProps {
+    userId: string;
+    onSubmit: (name: string) => void;
+}
+
+function GuestNameModal({ userId, onSubmit }: GuestNameModalProps) {
+    const [name, setName] = useState("");
+    const [submitting, setSubmitting] = useState(false);
+
+    const handleSubmit = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!name.trim()) return;
+
+        setSubmitting(true);
+        try {
+            const { error } = await getSupabaseBrowserClient()
+                .from("profiles")
+                .upsert({ id: userId, display_name: name.trim() }, { onConflict: "id" });
+
+            if (error) throw error;
+            onSubmit(name.trim());
+        } catch (err) {
+            console.error("Failed to save name", err);
+        } finally {
+            setSubmitting(false);
+        }
+    };
+
+    return (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 backdrop-blur-sm p-4">
+            <div className="w-full max-w-md rounded-xl bg-[#1a1a1f] border border-white/10 p-6 shadow-2xl">
+                <h2 className="text-xl font-bold text-white mb-2">Welcome!</h2>
+                <p className="text-white/60 mb-6 text-sm">
+                    Please enter your name to join the study room.
+                </p>
+
+                <form onSubmit={handleSubmit} className="space-y-4">
+                    <div>
+                        <label className="block text-xs font-bold text-white/40 uppercase mb-1">
+                            Display Name
+                        </label>
+                        <input
+                            type="text"
+                            value={name}
+                            onChange={(e) => setName(e.target.value)}
+                            className="w-full rounded-lg bg-black/50 border border-white/10 px-4 py-3 text-white placeholder:text-white/20 focus:border-purple-500 focus:outline-none"
+                            placeholder="e.g. Alex Smith"
+                            autoFocus
                         />
                     </div>
-                </div>
-            </div>
 
-            {toast ? <Toast message={toast} onDismiss={() => setToast(null)} /> : null}
+                    <button
+                        type="submit"
+                        disabled={!name.trim() || submitting}
+                        className="w-full rounded-lg bg-purple-600 py-3 font-bold text-white transition-colors hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                        {submitting ? "Joining..." : "Join Room"}
+                    </button>
+                </form>
+            </div>
         </div>
     );
 }
@@ -378,6 +478,8 @@ function YouTubePlayer({
     const playerRef = useRef<YT.Player | null>(null);
     const containerRef = useRef<HTMLDivElement>(null);
     const [inputVideoId, setInputVideoId] = useState("");
+    const [isBuffering, setIsBuffering] = useState(false);
+    const [isPlayerReady, setIsPlayerReady] = useState(false);
     const suppressEmit = useRef(false);
     const latestRef = useRef({ isPlaying, timeSec, playbackRate });
     const callbacksRef = useRef({ onPlay, onPause, onSeek, onRate });
@@ -448,6 +550,7 @@ function YouTubePlayer({
                 },
                 events: {
                     onReady: (e: YT.PlayerEvent) => {
+                        setIsPlayerReady(true);
                         const latest = latestRef.current;
 
                         // Avoid echoing initial setup back into the room sync.
@@ -475,7 +578,9 @@ function YouTubePlayer({
                     onStateChange: (e: YT.OnStateChangeEvent) => {
                         const state = e.data;
                         playerStateRef.current = state;
+                        setIsBuffering(state === 3); // 3 = Buffering
 
+                        // Ignore unstarted (-1) or cued (5) for events
                         const currentTime = e.target.getCurrentTime();
                         if (suppressEmit.current) {
                             suppressEmit.current = false;
@@ -545,41 +650,57 @@ function YouTubePlayer({
 
     // Sync playback state for everyone (host included)
     useEffect(() => {
-        if (!playerRef.current) return;
+        const player = playerRef.current;
+        if (!player || !player.getPlayerState) return;
 
         // If I am the one interacting, suppressEmit should be handled by the fact that
         // socket events come back. But to be safe, when WE apply a change from Props (Server),
         // we set suppressEmit = true so `onStateChange` triggers don't re-emit.
 
-        suppressEmit.current = true;
+        // Fix race condition: check if we actually need to change state.
+        // If we call pauseVideo() when already paused, onStateChange DOES NOT FIRE,
+        // and suppressEmit stays true forever (blocking future events).
+
+        const currentState = player.getPlayerState();
+        let didAction = false;
 
         if (isPlaying) {
-            // Only seek if significantly different to avoid stutter?
-            // For now, trust the server state.
-            const current = playerRef.current.getCurrentTime();
-            if (Math.abs(current - timeSec) > 1.0) {
-                playerRef.current.seekTo(timeSec, true);
+            const current = player.getCurrentTime();
+            if (Math.abs(current - timeSec) > 1.25) {
+                player.seekTo(timeSec, true);
+                // seek triggers checking, so correct there.
             }
-            playerRef.current.playVideo();
+
+            // If not playing and not buffering, then play
+            if (currentState !== 1 && currentState !== 3) {
+                suppressEmit.current = true;
+                player.playVideo();
+                didAction = true;
+            }
         } else {
-            playerRef.current.pauseVideo();
+            // If playing or buffering, then pause
+            if (currentState === 1 || currentState === 3) {
+                suppressEmit.current = true;
+                player.pauseVideo();
+                didAction = true;
+            }
             // Don't seek repeatedly if paused, unless moved
-            const current = playerRef.current.getCurrentTime();
-            if (Math.abs(current - timeSec) > 1.0) {
-                playerRef.current.seekTo(timeSec, true);
+            const current = player.getCurrentTime();
+            if (Math.abs(current - timeSec) > 1.25) {
+                player.seekTo(timeSec, true);
             }
         }
 
-        playerRef.current.setPlaybackRate(playbackRate);
+        if (player.getPlaybackRate() !== playbackRate) {
+            player.setPlaybackRate(playbackRate);
+        }
 
-        // Reset suppress after a short delay? No, onStateChange handles it.
-        // Actually, `onStateChange` checks `suppressEmit.current`. 
-        // We set it true here. When does it set false?
-        // It sets false inside `onStateChange`! 
-        // "if (suppressEmit.current) { suppressEmit.current = false; ... return; }"
-        // This is correct.
+        // If we didn't trigger an action that fires an event, we shouldn't leave
+        // suppressEmit on (though strictly we only turn it on IF we do an action).
+        // My logic above only sets suppressEmit = true IF we call play/pause.
+        // What about Seek? seekTo fires events? Yes.
+
     }, [isPlaying, timeSec, playbackRate]);
-
     return (
         <div className="flex flex-col h-full">
             {/* Video Input (host only) */}
@@ -605,9 +726,21 @@ function YouTubePlayer({
             )}
 
             {/* Player */}
-            <div className="relative flex-1 rounded-xl bg-black overflow-hidden">
+            <div className="relative flex-1 rounded-xl bg-black overflow-hidden group">
                 {videoId ? (
-                    <div ref={containerRef} className="absolute inset-0" />
+                    <>
+                        <div ref={containerRef} className="absolute inset-0" />
+                        {(!isPlayerReady || isBuffering) && (
+                            <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+                                <div className="flex flex-col items-center gap-2">
+                                    <div className="h-10 w-10 animate-spin rounded-full border-4 border-white/20 border-t-purple-500" />
+                                    <span className="text-sm font-medium text-white/80">
+                                        {isBuffering ? "Buffering..." : "Loading Video..."}
+                                    </span>
+                                </div>
+                            </div>
+                        )}
+                    </>
                 ) : (
                     <div className="flex h-full items-center justify-center">
                         <div className="text-white/40 text-center">
