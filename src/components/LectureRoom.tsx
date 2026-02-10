@@ -98,6 +98,10 @@ export function LectureRoom({ roomId }: LectureRoomProps) {
                 setLoading(true);
                 setError(null);
 
+                if (!supabase) {
+                    throw new Error("Supabase client not initialized. Check environment variables.");
+                }
+
                 // 1. Check Auth & Profile
                 const { data: { user } } = await supabase.auth.getUser();
                 if (!user) {
