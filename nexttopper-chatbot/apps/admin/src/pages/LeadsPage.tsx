@@ -6,6 +6,7 @@ type Lead = {
   persona: 'student' | 'parent' | 'lead';
   name: string | null;
   phone_e164: string;
+  email: string | null;
   class_moving_to: string | null;
   target_exam: string | null;
   query_text: string | null;
@@ -29,7 +30,7 @@ export function LeadsPage() {
     const { data, error } = await supabase
       .from('nt_leads')
       .select(
-        'id, persona, name, phone_e164, class_moving_to, target_exam, query_text, source, page_url, priority, status, created_at'
+        'id, persona, name, phone_e164, email, class_moving_to, target_exam, query_text, source, page_url, priority, status, created_at'
       )
       .order('created_at', { ascending: false })
       .limit(200);
@@ -72,6 +73,7 @@ export function LeadsPage() {
                 <Th>When</Th>
                 <Th>Phone</Th>
                 <Th>Persona</Th>
+                <Th>Email</Th>
                 <Th>Query</Th>
                 <Th>Priority</Th>
                 <Th>Status</Th>
@@ -99,6 +101,9 @@ export function LeadsPage() {
                     </div>
                   </Td>
                   <Td>
+                    <div style={{ fontSize: 13 }}>{l.email ?? '-'}</div>
+                  </Td>
+                  <Td>
                     <div style={{ fontSize: 13, whiteSpace: 'pre-wrap' }}>
                       {l.query_text ?? '-'}
                     </div>
@@ -121,7 +126,7 @@ export function LeadsPage() {
               ))}
               {rows.length === 0 ? (
                 <tr>
-                  <Td colSpan={6} style={{ textAlign: 'center', color: '#64748b' }}>
+                  <Td colSpan={7} style={{ textAlign: 'center', color: '#64748b' }}>
                     No leads yet.
                   </Td>
                 </tr>
@@ -202,4 +207,3 @@ const inputStyle: React.CSSProperties = {
   borderRadius: 10,
   border: '1px solid #e2e8f0',
 };
-

@@ -27,6 +27,7 @@ export function Widget({ functionsBaseUrl }: WidgetProps) {
       { id: 'fees_offers', label: 'Fee Structure & Offers' },
       { id: 'timetable', label: 'Timetable & Schedule' },
       { id: 'callback', label: 'Request Call Back' },
+      { id: 'not_satisfied', label: 'Not satisfied' },
     ],
     []
   );

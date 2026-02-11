@@ -31,6 +31,7 @@ export default function App() {
   const [userId, setUserId] = useState<string | null>(() => getLs('user_id'));
   const [userName, setUserName] = useState<string | null>(() => getLs('userName'));
   const [userMobile, setUserMobile] = useState<string | null>(() => getLs('userMobile'));
+  const [userEmail, setUserEmail] = useState<string | null>(() => getLs('userEmail'));
 
   useEffect(() => {
     bot.init(config);
@@ -41,12 +42,14 @@ export default function App() {
     setUserId(getLs('user_id'));
     setUserName(getLs('userName'));
     setUserMobile(getLs('userMobile'));
+    setUserEmail(getLs('userEmail'));
   }
 
   function setGuest() {
     delLs('user_id');
     delLs('userName');
     delLs('userMobile');
+    delLs('userEmail');
     refreshState();
   }
 
@@ -54,6 +57,7 @@ export default function App() {
     setLs('user_id', 'TEST_NT_1001');
     setLs('userName', 'Rahul');
     setLs('userMobile', '9999999999');
+    setLs('userEmail', 'rahul@example.com');
     refreshState();
   }
 
@@ -94,6 +98,7 @@ export default function App() {
         <Row k="user_id" v={userId} />
         <Row k="userName" v={userName} />
         <Row k="userMobile" v={userMobile} />
+        <Row k="userEmail" v={userEmail} />
         <Row k="nt_bot_visitor_id" v={getLs('nt_bot_visitor_id')} />
       </div>
 

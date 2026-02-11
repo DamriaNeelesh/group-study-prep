@@ -45,6 +45,15 @@ function normalizePhoneToE164(
   return { ok: false, error: "Please enter a valid 10-digit mobile number." };
 }
 
+function normalizeEmail(input: string | null): { ok: true; email: string } | { ok: false; error: string } | null {
+  if (!input) return null;
+  const raw = String(input).trim().toLowerCase();
+  if (!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(raw)) {
+    return { ok: false, error: "Please enter a valid email address." };
+  }
+  return { ok: true, email: raw };
+}
+
 async function sendResendEmail(to: string, subject: string, text: string) {
   const apiKey = Deno.env.get("RESEND_API_KEY");
   if (!apiKey) return;
@@ -70,6 +79,7 @@ Deno.serve(async (req) => {
       | "other";
     const issue_details = (body?.issue_details ?? null) as string | null;
     const page_url = (body?.page_url ?? null) as string | null;
+    const emailInput = (body?.email ?? null) as string | null;
 
     const nt_user = (body?.nt_user ?? {}) as {
       id?: string | null;
@@ -79,6 +89,8 @@ Deno.serve(async (req) => {
 
     const rawPhone = (body?.phone ?? nt_user?.mobile ?? "") as string;
     const phone = rawPhone ? normalizePhoneToE164(String(rawPhone)) : null;
+    const email = normalizeEmail(emailInput ?? nt_user?.email ?? null);
+    if (email && !email.ok) return json({ error: email.error }, 400);
 
     const ticketPayload = {
       issue_type,
@@ -86,6 +98,7 @@ Deno.serve(async (req) => {
       nt_user_id: nt_user?.id ?? null,
       nt_user_name: nt_user?.name ?? null,
       nt_user_mobile: nt_user?.mobile ?? null,
+      email: email && email.ok ? email.email : null,
       phone_e164: phone && phone.ok ? phone.e164 : null,
       page_url,
       status: "open",
@@ -102,7 +115,7 @@ Deno.serve(async (req) => {
     await sendResendEmail(
       supportTo,
       `Next Toppers Support Ticket (${issue_type})`,
-      `Ticket ID: ${inserted.id}\nIssue: ${issue_type}\nDetails: ${issue_details ?? "-"}\nUser: ${ticketPayload.nt_user_name ?? "-"} (${ticketPayload.nt_user_id ?? "-"})\nMobile: ${ticketPayload.nt_user_mobile ?? ticketPayload.phone_e164 ?? "-"}\nPage: ${page_url ?? "-"}`,
+      `Ticket ID: ${inserted.id}\nIssue: ${issue_type}\nDetails: ${issue_details ?? "-"}\nUser: ${ticketPayload.nt_user_name ?? "-"} (${ticketPayload.nt_user_id ?? "-"})\nEmail: ${ticketPayload.email ?? "-"}\nMobile: ${ticketPayload.nt_user_mobile ?? ticketPayload.phone_e164 ?? "-"}\nPage: ${page_url ?? "-"}`,
     );
 
     return json({
@@ -117,4 +130,3 @@ Deno.serve(async (req) => {
     return json({ error: msg }, 500);
   }
 });
-

@@ -10,13 +10,7 @@ test('guest can start sales flow and submit phone for counselor callback', async
   // Open widget
   await page.locator('#nt-counselor-widget-root .ntw-fab').click();
 
-  // L1 menu
-  await page
-    .locator('#nt-counselor-widget-root .ntw-quick-btn')
-    .filter({ hasText: 'New Batches (2026-27)' })
-    .click();
-
-  // Pick class 10
+  // New user flow: pick class 10
   await page
     .locator('#nt-counselor-widget-root .ntw-quick-btn')
     .filter({ hasText: 'Class 10' })
@@ -37,4 +31,3 @@ test('guest can start sales flow and submit phone for counselor callback', async
     page.locator('#nt-counselor-widget-root .ntw-messages')
   ).toContainText('call');
 });
-

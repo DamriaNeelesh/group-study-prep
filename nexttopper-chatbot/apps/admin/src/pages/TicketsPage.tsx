@@ -8,6 +8,7 @@ type Ticket = {
   nt_user_id: string | null;
   nt_user_name: string | null;
   nt_user_mobile: string | null;
+  email: string | null;
   phone_e164: string | null;
   page_url: string | null;
   status: 'open' | 'in_progress' | 'resolved';
@@ -27,7 +28,7 @@ export function TicketsPage() {
     const { data, error } = await supabase
       .from('nt_support_tickets')
       .select(
-        'id, issue_type, issue_details, nt_user_id, nt_user_name, nt_user_mobile, phone_e164, page_url, status, created_at'
+        'id, issue_type, issue_details, nt_user_id, nt_user_name, nt_user_mobile, email, phone_e164, page_url, status, created_at'
       )
       .order('created_at', { ascending: false })
       .limit(200);
@@ -73,6 +74,7 @@ export function TicketsPage() {
                 <Th>When</Th>
                 <Th>Issue</Th>
                 <Th>User</Th>
+                <Th>Email</Th>
                 <Th>Details</Th>
                 <Th>Status</Th>
               </tr>
@@ -103,6 +105,9 @@ export function TicketsPage() {
                     </div>
                   </Td>
                   <Td>
+                    <div style={{ fontSize: 13 }}>{t.email ?? '-'}</div>
+                  </Td>
+                  <Td>
                     <div style={{ fontSize: 13, whiteSpace: 'pre-wrap' }}>
                       {t.issue_details ?? '-'}
                     </div>
@@ -126,7 +131,7 @@ export function TicketsPage() {
               ))}
               {rows.length === 0 ? (
                 <tr>
-                  <Td colSpan={5} style={{ textAlign: 'center', color: '#64748b' }}>
+                  <Td colSpan={6} style={{ textAlign: 'center', color: '#64748b' }}>
                     No tickets yet.
                   </Td>
                 </tr>
@@ -207,4 +212,3 @@ const inputStyle: React.CSSProperties = {
   borderRadius: 10,
   border: '1px solid #e2e8f0',
 };
-

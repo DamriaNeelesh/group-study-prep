@@ -13,15 +13,34 @@ type BotQuickReply = { id: string; label: string };
 type BotMessage = { role: "bot"; text: string };
 
 type State = {
-  flow?: "menu" | "new_batches" | "fees_offers" | "timetable" | "support" | "callback" | "lead_capture";
+  flow?:
+    | "menu"
+    | "new_batches"
+    | "fees_offers"
+    | "timetable"
+    | "support"
+    | "callback"
+    | "lead_capture"
+    | "new_user_course_select"
+    | "my_courses"
+    | "dissatisfied";
   class_group?: "9" | "10" | "11_12";
   batch_key?: string;
   issue_type?: "video_not_playing" | "pdf_not_opening" | "payment_failed" | "other";
-  awaiting?: "lead_phone" | "support_details" | "callback_name_or_phone" | "callback_phone" | "callback_exam";
+  awaiting?:
+    | "lead_phone"
+    | "support_details"
+    | "callback_name_or_phone"
+    | "callback_phone"
+    | "callback_exam"
+    | "contact_email"
+    | "contact_phone";
   callback_name?: string | null;
   callback_phone_e164?: string | null;
   lead_priority?: "normal" | "high";
   lead_query_text?: string | null;
+  contact_email?: string | null;
+  resolved_user_id?: string | null;
 };
 
 const L1: BotQuickReply[] = [
@@ -30,6 +49,7 @@ const L1: BotQuickReply[] = [
   { id: "fees_offers", label: "Fee Structure & Offers" },
   { id: "timetable", label: "Timetable & Schedule" },
   { id: "callback", label: "Request Call Back" },
+  { id: "not_satisfied", label: "Not satisfied" },
 ];
 
 const CLASS_OPTS: BotQuickReply[] = [
@@ -94,6 +114,18 @@ function isHandoverTrigger(text: string): boolean {
   );
 }
 
+function isDissatisfied(text: string): boolean {
+  const t = (text ?? "").toLowerCase();
+  return (
+    /\bnot satisfied\b/.test(t) ||
+    /\bnot happy\b/.test(t) ||
+    /\bunsatisfied\b/.test(t) ||
+    /\bcomplain\b/.test(t) ||
+    /\bcomplaint\b/.test(t) ||
+    /\bpoor support\b/.test(t)
+  );
+}
+
 function normalizePhoneToE164(
   input: string,
 ): { ok: true; e164: string } | { ok: false; error: string } {
@@ -111,6 +143,15 @@ function normalizePhoneToE164(
   if (digits.length === 11 && digits.startsWith("0")) return { ok: true, e164: `+91${digits.slice(1)}` };
   if (digits.length === 12 && digits.startsWith("91")) return { ok: true, e164: `+${digits}` };
   return { ok: false, error: "Please enter a valid 10-digit mobile number." };
+}
+
+function normalizeEmail(input: string): { ok: true; email: string } | { ok: false; error: string } {
+  const raw = (input ?? "").trim().toLowerCase();
+  if (!raw) return { ok: false, error: "Email is required." };
+  if (!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(raw)) {
+    return { ok: false, error: "Please enter a valid email address." };
+  }
+  return { ok: true, email: raw };
 }
 
 function istDateString(now = new Date()): string {
@@ -213,7 +254,7 @@ Deno.serve(async (req) => {
 
     const { data: sessionRow } = await sb
       .from("nt_chat_sessions")
-      .select("id, state, nt_user_id, nt_user_name, nt_user_mobile")
+      .select("id, state, nt_user_id, nt_user_name, nt_user_mobile, nt_user_email")
       .eq("id", session_id)
       .maybeSingle();
     if (!sessionRow) return json({ error: "session not found" }, 404);
@@ -250,6 +291,72 @@ Deno.serve(async (req) => {
       return await respond();
     }
 
+    // Awaiting: dissatisfaction contact email
+    if (state.awaiting === "contact_email") {
+      if (type !== "text") {
+        messages.push({ role: "bot", text: "Please share your email address." });
+        quick_replies = [{ id: "back_menu", label: "Back to Menu" }];
+        return await respond();
+      }
+      const email = normalizeEmail(userText);
+      if (!email.ok) {
+        messages.push({ role: "bot", text: email.error });
+        quick_replies = [{ id: "back_menu", label: "Back to Menu" }];
+        return await respond();
+      }
+      nextState = { ...state, awaiting: "contact_phone", contact_email: email.email };
+      messages.push({ role: "bot", text: "Thanks. Please share your phone number (10 digits)." });
+      quick_replies = [{ id: "back_menu", label: "Back to Menu" }];
+      return await respond();
+    }
+
+    // Awaiting: dissatisfaction contact phone
+    if (state.awaiting === "contact_phone") {
+      if (type !== "text") {
+        messages.push({ role: "bot", text: "Please share your phone number." });
+        quick_replies = [{ id: "back_menu", label: "Back to Menu" }];
+        return await respond();
+      }
+      const phone = normalizePhoneToE164(userText);
+      if (!phone.ok) {
+        messages.push({ role: "bot", text: `${phone.error} Example: 9999999999` });
+        quick_replies = [{ id: "back_menu", label: "Back to Menu" }];
+        return await respond();
+      }
+
+      const leadPayload = {
+        persona: "student",
+        name: sessionRow.nt_user_name ?? null,
+        phone_e164: phone.e164,
+        email: state.contact_email ?? sessionRow.nt_user_email ?? null,
+        class_moving_to: nextState.class_group ?? null,
+        target_exam: "unknown",
+        query_text: "Not satisfied with chatbot support",
+        source: "web_widget",
+        page_url,
+        utm: parseUtm(page_url),
+        priority: "high",
+        status: "new",
+      };
+
+      const { error: leadErr } = await sb.from("nt_leads").insert(leadPayload);
+      if (leadErr) throw leadErr;
+
+      const salesTo = Deno.env.get("SALES_ALERT_EMAIL");
+      if (salesTo) {
+        await sendResendEmail(
+          salesTo,
+          "Next Toppers Support Escalation",
+          `Phone: ${leadPayload.phone_e164}\nEmail: ${leadPayload.email ?? "-"}\nName: ${leadPayload.name ?? "-"}\nQuery: ${leadPayload.query_text ?? "-"}\nPage: ${leadPayload.page_url ?? "-"}`,
+        );
+      }
+
+      messages.push({ role: "bot", text: "Thanks for the feedback. Our team will reach out to you soon." });
+      quick_replies = L1;
+      nextState = { flow: "menu" };
+      return await respond();
+    }
+
     // Awaiting: lead phone
     if (state.awaiting === "lead_phone") {
       if (type !== "text") {
@@ -271,6 +378,7 @@ Deno.serve(async (req) => {
         persona: "lead",
         name: sessionRow.nt_user_name ?? null,
         phone_e164: phone.e164,
+        email: sessionRow.nt_user_email ?? null,
         class_moving_to: nextState.class_group ?? null,
         target_exam: "unknown",
         query_text: nextState.lead_query_text ?? "Talk to counselor",
@@ -317,6 +425,7 @@ Deno.serve(async (req) => {
         nt_user_id: sessionRow.nt_user_id ?? null,
         nt_user_name: sessionRow.nt_user_name ?? null,
         nt_user_mobile: sessionRow.nt_user_mobile ?? null,
+        email: sessionRow.nt_user_email ?? null,
         phone_e164: phone && phone.ok ? phone.e164 : null,
         page_url,
         status: "open",
@@ -389,6 +498,7 @@ Deno.serve(async (req) => {
         persona: "lead",
         name: state.callback_name ?? null,
         phone_e164,
+        email: sessionRow.nt_user_email ?? null,
         class_moving_to: state.class_group ?? null,
         target_exam: exam,
         query_text: "Request Call Back",
@@ -414,6 +524,25 @@ Deno.serve(async (req) => {
       messages.push({ role: "bot", text: `Noted! Our team will call you at ${phone_e164} within 24 hours.` });
       quick_replies = L1;
       nextState = { flow: "menu" };
+      return await respond();
+    }
+
+    // Free-text: dissatisfaction escalation
+    if (type === "text" && isDissatisfied(userText)) {
+      const existingEmail = sessionRow.nt_user_email ?? null;
+      nextState = {
+        flow: "dissatisfied",
+        awaiting: existingEmail ? "contact_phone" : "contact_email",
+        contact_email: existingEmail,
+      };
+      messages.push({
+        role: "bot",
+        text: "I'm sorry you're not satisfied. Please share your email and phone number so we can follow up.",
+      });
+      if (existingEmail) {
+        messages.push({ role: "bot", text: "Please share your phone number (10 digits)." });
+      }
+      quick_replies = [{ id: "back_menu", label: "Back to Menu" }];
       return await respond();
     }
 
@@ -466,19 +595,88 @@ Deno.serve(async (req) => {
           quick_replies = [{ id: "back_menu", label: "Back to Menu" }];
           return await respond();
         }
+        case "not_satisfied": {
+          personaToSet = "student";
+          nextState = { flow: "dissatisfied", awaiting: "contact_email" };
+          messages.push({ role: "bot", text: "I'm sorry the support didn't help. Please share your email address and we will get back to you soon." });
+          quick_replies = [{ id: "back_menu", label: "Back to Menu" }];
+          return await respond();
+        }
+        case "my_courses": {
+          personaToSet = "student";
+          nextState = { flow: "my_courses" };
+          break;
+        }
+        case "need_support": {
+          personaToSet = "student";
+          nextState = { flow: "support" };
+          messages.push({ role: "bot", text: "What issue are you facing?" });
+          quick_replies = ISSUE_OPTS;
+          return await respond();
+        }
+      }
+
+      if (selection_id === "my_courses") {
+        const resolvedUserId = state.resolved_user_id ?? sessionRow.nt_user_id ?? null;
+        if (!resolvedUserId) {
+          messages.push({ role: "bot", text: "Please log in or share your email so I can find your purchased courses." });
+          quick_replies = [
+            { id: "callback", label: "Request Call Back" },
+            { id: "back_menu", label: "Back to Menu" },
+          ];
+          nextState = { flow: "menu" };
+          return await respond();
+        }
+
+        const { data: enrollments } = await sb
+          .from("nt_user_enrollments")
+          .select("batch_key, nt_course_catalog(batch_name)")
+          .eq("nt_user_id", resolvedUserId);
+
+        if (!enrollments?.length) {
+          messages.push({ role: "bot", text: "I couldn't find any purchased courses on your account yet." });
+          quick_replies = [
+            { id: "new_batches", label: "New Batches (2026-27)" },
+            { id: "fees_offers", label: "Fee Structure & Offers" },
+            { id: "callback", label: "Request Call Back" },
+          ];
+          nextState = { flow: "menu" };
+          return await respond();
+        }
+
+        const names = enrollments
+          .map((e: any) => e?.nt_course_catalog?.batch_name ?? e.batch_key)
+          .filter(Boolean);
+        messages.push({ role: "bot", text: `Your purchased courses:\n- ${names.join("\n- ")}` });
+        messages.push({ role: "bot", text: "How can I help you with these courses?" });
+        quick_replies = [
+          { id: "enrolled_support", label: "My Enrolled Course" },
+          { id: "timetable", label: "Timetable & Schedule" },
+          { id: "back_menu", label: "Back to Menu" },
+        ];
+        nextState = { flow: "menu" };
+        return await respond();
       }
 
       // Class selection based on flow
       const cg = classFromSelection(selection_id);
       if (cg) {
         const course = await getCourseForClassGroup(sb, cg);
-        nextState = { ...state, class_group: cg, batch_key: course?.batch_key ?? undefined };
+        nextState = {
+          ...state,
+          class_group: cg,
+          batch_key: course?.batch_key ?? undefined,
+          ...(state.flow === "new_user_course_select" ? { flow: "new_batches" } : {}),
+        };
 
-        if (state.flow === "new_batches") {
+        if (state.flow === "new_batches" || state.flow === "new_user_course_select") {
           personaToSet = "lead";
           const highlights = Array.isArray(course?.highlights) && course.highlights.length ? course.highlights.join(" + ") : "Live Classes + Notes";
           messages.push({ role: "bot", text: `Great choice! ${course?.batch_name ?? "This batch"} for Class ${cg.replace("_", "/")} covers ${subjectsForClassGroup(cg)} with ${highlights}.` });
           messages.push({ role: "bot", text: `New session starts: ${formatDateHuman(course?.start_date ?? null)}.` });
+          if (course?.purchase_url) {
+            messages.push({ role: "bot", text: `Enroll here: ${course.purchase_url}` });
+          }
           quick_replies = CTA_OPTS;
           return await respond();
         }

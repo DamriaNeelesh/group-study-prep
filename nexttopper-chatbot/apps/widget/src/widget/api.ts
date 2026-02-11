@@ -8,7 +8,12 @@ export type BotResponse = {
   quick_replies?: BotQuickReply[];
 };
 
-export type NtUser = { id: string | null; name: string | null; mobile: string | null };
+export type NtUser = {
+  id: string | null;
+  name: string | null;
+  mobile: string | null;
+  email: string | null;
+};
 
 export function getVisitorId(): string {
   const key = 'nt_bot_visitor_id';
@@ -19,11 +24,36 @@ export function getVisitorId(): string {
   return id;
 }
 
+function decodeJwtEmail(jwt: string | null): string | null {
+  if (!jwt) return null;
+  const parts = jwt.split('.');
+  if (parts.length < 2) return null;
+  try {
+    const base64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+    const padded = base64 + '='.repeat((4 - (base64.length % 4)) % 4);
+    const json = JSON.parse(atob(padded)) as { email?: string };
+    return typeof json.email === 'string' ? json.email : null;
+  } catch {
+    return null;
+  }
+}
+
+function getEmailFromLocalStorage(): string | null {
+  return (
+    localStorage.getItem('userEmail') ??
+    localStorage.getItem('email') ??
+    localStorage.getItem('user_email') ??
+    null
+  );
+}
+
 export function getNtUserFromLocalStorage(): NtUser {
+  const email = getEmailFromLocalStorage() ?? decodeJwtEmail(localStorage.getItem('jwt'));
   return {
     id: localStorage.getItem('user_id'),
     name: localStorage.getItem('userName'),
     mobile: localStorage.getItem('userMobile'),
+    email,
   };
 }
 
@@ -59,4 +89,3 @@ export async function botEvent(
 ): Promise<BotResponse> {
   return await postJson<BotResponse>(`${functionsBaseUrl}/bot_event`, payload);
 }
-

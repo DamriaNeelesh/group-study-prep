@@ -12,15 +12,30 @@ const corsHeaders = {
 type BotQuickReply = { id: string; label: string };
 type BotMessage = { role: "bot"; text: string };
 
-function l1Menu(): BotQuickReply[] {
+type State = {
+  flow?: "menu" | "new_user_course_select";
+  resolved_user_id?: string | null;
+};
+
+function l1Menu(extra: BotQuickReply[] = []): BotQuickReply[] {
   return [
+    ...extra,
     { id: "new_batches", label: "New Batches (2026-27)" },
     { id: "enrolled_support", label: "My Enrolled Course" },
     { id: "fees_offers", label: "Fee Structure & Offers" },
     { id: "timetable", label: "Timetable & Schedule" },
     { id: "callback", label: "Request Call Back" },
+    { id: "not_satisfied", label: "Not satisfied" },
   ];
 }
+
+const CLASS_OPTS: BotQuickReply[] = [
+  { id: "class_9", label: "Class 9 (Aarambh)" },
+  { id: "class_10", label: "Class 10 (Abhay)" },
+  { id: "class_11_12", label: "Class 11/12 (Prarambh)" },
+  { id: "need_support", label: "I need support" },
+  { id: "back_menu", label: "Back to Menu" },
+];
 
 function getSupabaseAdmin() {
   const projectRef = Deno.env.get("PROJECT_REF");
@@ -54,6 +69,7 @@ Deno.serve(async (req) => {
       id?: string | null;
       name?: string | null;
       mobile?: string | null;
+      email?: string | null;
     };
 
     if (!visitor_id) {
@@ -65,6 +81,35 @@ Deno.serve(async (req) => {
 
     const supabase = getSupabaseAdmin();
 
+    let resolvedUserId: string | null = nt_user.id ?? null;
+    const resolvedEmail = nt_user.email ?? null;
+
+    if (!resolvedUserId && resolvedEmail) {
+      const { data: customer } = await supabase
+        .from("nt_customer_profiles")
+        .select("nt_user_id")
+        .eq("email", resolvedEmail)
+        .maybeSingle();
+      resolvedUserId = customer?.nt_user_id ?? null;
+    }
+
+    let enrollments: Array<{ batch_name?: string | null }> = [];
+    if (resolvedUserId) {
+      const { data } = await supabase
+        .from("nt_user_enrollments")
+        .select("batch_key, nt_course_catalog(batch_name)")
+        .eq("nt_user_id", resolvedUserId);
+      enrollments = (data ?? []) as Array<{ batch_name?: string | null }>;
+    }
+
+    const isExistingCustomer = enrollments.length > 0;
+    const isNewUser = !resolvedUserId && !resolvedEmail && !nt_user.name && !nt_user.mobile;
+
+    const initialState: State = {
+      flow: isExistingCustomer ? "menu" : "new_user_course_select",
+      resolved_user_id: resolvedUserId,
+    };
+
     const { data: session, error: sessionErr } = await supabase
       .from("nt_chat_sessions")
       .insert({
@@ -72,8 +117,9 @@ Deno.serve(async (req) => {
         nt_user_id: nt_user.id ?? null,
         nt_user_name: nt_user.name ?? null,
         nt_user_mobile: nt_user.mobile ?? null,
+        nt_user_email: resolvedEmail,
         persona: null,
-        state: { flow: "menu" },
+        state: initialState,
       })
       .select("id")
       .single();
@@ -100,14 +146,28 @@ Deno.serve(async (req) => {
         : `Hi ${nt_user.name}, welcome back!`;
     }
 
-    const messages: BotMessage[] = [
-      { role: "bot", text: greeting },
-      {
+    const messages: BotMessage[] = [{ role: "bot", text: greeting }];
+    let quickReplies: BotQuickReply[] = [];
+
+    if (isExistingCustomer) {
+      messages.push({
         role: "bot",
-        text:
-          "What would you like help with? Please choose an option below:",
-      },
-    ];
+        text: "I can help with your purchased courses. You can view your courses or choose any option below.",
+      });
+      quickReplies = l1Menu([{ id: "my_courses", label: "My Courses" }]);
+    } else if (isNewUser) {
+      messages.push({
+        role: "bot",
+        text: "Are you looking to purchase a course? Which class are you moving to?",
+      });
+      quickReplies = CLASS_OPTS;
+    } else {
+      messages.push({
+        role: "bot",
+        text: "Which class are you moving to? I can share the best course options for you.",
+      });
+      quickReplies = CLASS_OPTS;
+    }
 
     // Log bot messages
     await supabase.from("nt_chat_messages").insert(
@@ -123,7 +183,7 @@ Deno.serve(async (req) => {
       JSON.stringify({
         session_id: session.id,
         messages,
-        quick_replies: l1Menu(),
+        quick_replies: quickReplies,
       }),
       {
         headers: { ...corsHeaders, "content-type": "application/json" },

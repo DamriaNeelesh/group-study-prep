@@ -45,6 +45,15 @@ function normalizePhoneToE164(
   return { ok: false, error: "Please enter a valid 10-digit mobile number." };
 }
 
+function normalizeEmail(input: string | null): { ok: true; email: string } | { ok: false; error: string } | null {
+  if (!input) return null;
+  const raw = String(input).trim().toLowerCase();
+  if (!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(raw)) {
+    return { ok: false, error: "Please enter a valid email address." };
+  }
+  return { ok: true, email: raw };
+}
+
 async function sendResendEmail(to: string, subject: string, text: string) {
   const apiKey = Deno.env.get("RESEND_API_KEY");
   if (!apiKey) return;
@@ -65,6 +74,7 @@ Deno.serve(async (req) => {
 
     const persona = (body?.persona ?? "lead") as "student" | "parent" | "lead";
     const name = (body?.name ?? null) as string | null;
+    const email = (body?.email ?? null) as string | null;
     const phone = String(body?.phone ?? "").trim();
     const class_moving_to = (body?.class_moving_to ?? null) as string | null;
     const target_exam = (body?.target_exam ?? "unknown") as string | null;
@@ -76,11 +86,14 @@ Deno.serve(async (req) => {
 
     const p = normalizePhoneToE164(phone);
     if (!p.ok) return json({ error: p.error }, 400);
+    const e = normalizeEmail(email);
+    if (e && !e.ok) return json({ error: e.error }, 400);
 
     const payload = {
       persona,
       name,
       phone_e164: p.e164,
+      email: e && e.ok ? e.email : null,
       class_moving_to,
       target_exam,
       query_text,
@@ -99,7 +112,7 @@ Deno.serve(async (req) => {
       await sendResendEmail(
         salesTo,
         `Next Toppers Lead (${priority})`,
-        `Phone: ${p.e164}\nName: ${name ?? "-"}\nPersona: ${persona}\nClass: ${class_moving_to ?? "-"}\nExam: ${target_exam ?? "-"}\nQuery: ${query_text ?? "-"}\nPage: ${page_url ?? "-"}`,
+        `Phone: ${p.e164}\nEmail: ${e && e.ok ? e.email : "-"}\nName: ${name ?? "-"}\nPersona: ${persona}\nClass: ${class_moving_to ?? "-"}\nExam: ${target_exam ?? "-"}\nQuery: ${query_text ?? "-"}\nPage: ${page_url ?? "-"}`,
       );
     }
 
@@ -122,4 +135,3 @@ const L1 = [
   { id: "timetable", label: "Timetable & Schedule" },
   { id: "callback", label: "Request Call Back" },
 ];
-
