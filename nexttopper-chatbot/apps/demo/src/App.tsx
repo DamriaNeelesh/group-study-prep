@@ -24,7 +24,7 @@ function delLs(key: string) {
 export default function App() {
   const projectRef =
     (import.meta.env.VITE_SUPABASE_PROJECT_REF as string | undefined) ??
-    'ibsisfnjxeowvdtvgzff';
+    'avtmohfcixlzriichofq';
 
   const config = useMemo(() => ({ supabaseProjectRef: projectRef }), [projectRef]);
 
@@ -133,4 +133,3 @@ const btnPrimary: React.CSSProperties = {
   cursor: 'pointer',
   fontWeight: 900,
 };
-

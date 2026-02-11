@@ -5,7 +5,7 @@ import bot from './index';
 
 bot.init({
   // Dev default (matches your Supabase project in MCP settings)
-  supabaseProjectRef: 'ibsisfnjxeowvdtvgzff',
+  supabaseProjectRef: 'avtmohfcixlzriichofq',
 });
 
 function Dev() {

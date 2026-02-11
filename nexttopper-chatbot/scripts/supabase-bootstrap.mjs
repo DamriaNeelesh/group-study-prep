@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
-const PROJECT_REF = process.env.SUPABASE_PROJECT_REF ?? 'ibsisfnjxeowvdtvgzff';
+const PROJECT_REF = process.env.SUPABASE_PROJECT_REF ?? 'avtmohfcixlzriichofq';
 const MANAGEMENT_API = process.env.SUPABASE_MANAGEMENT_API ?? 'https://api.supabase.com';
 
 const DEFAULT_CLINE_SETTINGS_PATH =
