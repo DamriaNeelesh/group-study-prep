@@ -80,7 +80,7 @@ Deno.serve(async (req) => {
 
     if (sessionErr) throw sessionErr;
 
-    let greeting = "Hi! Main Next Toppers Smart Counselor hu. Kaise help karu?";
+    let greeting = "Hi! I am your Next Toppers Smart Counselor. How can I help you today?";
 
     if (nt_user?.name) {
       // Try greeting with enrollment
@@ -105,7 +105,7 @@ Deno.serve(async (req) => {
       {
         role: "bot",
         text:
-          "Aap kya jaan-na chahte ho? Neeche se option select kar lo:",
+          "What would you like help with? Please choose an option below:",
       },
     ];
 

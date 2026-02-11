@@ -245,7 +245,7 @@ Deno.serve(async (req) => {
 
     if (type === "select" && selection_id === "back_menu") {
       nextState = { flow: "menu" };
-      messages.push({ role: "bot", text: "Main menu open kar diya. Aap kya karna chahte ho?" });
+      messages.push({ role: "bot", text: "I have opened the main menu. What would you like to do?" });
       quick_replies = L1;
       return await respond();
     }
@@ -253,7 +253,7 @@ Deno.serve(async (req) => {
     // Awaiting: lead phone
     if (state.awaiting === "lead_phone") {
       if (type !== "text") {
-        messages.push({ role: "bot", text: "Please apna phone number type kijiye." });
+        messages.push({ role: "bot", text: "Please type your phone number." });
         quick_replies = [{ id: "back_menu", label: "Back to Menu" }];
         return await respond();
       }
@@ -294,7 +294,7 @@ Deno.serve(async (req) => {
       }
 
       const senior = leadPayload.priority === "high" ? "senior " : "";
-      messages.push({ role: "bot", text: `Done! Humare ${senior}counselor aapko ${phone.e164} par 24 hours ke andar call karenge.` });
+      messages.push({ role: "bot", text: `Done! Our ${senior}counselor will call you at ${phone.e164} within 24 hours.` });
       quick_replies = L1;
       nextState = { flow: "menu" };
       return await respond();
@@ -303,7 +303,7 @@ Deno.serve(async (req) => {
     // Awaiting: support details
     if (state.awaiting === "support_details") {
       if (type !== "text") {
-        messages.push({ role: "bot", text: "Please issue details type kijiye." });
+        messages.push({ role: "bot", text: "Please type the issue details." });
         quick_replies = [{ id: "back_menu", label: "Back to Menu" }];
         return await respond();
       }
@@ -336,7 +336,7 @@ Deno.serve(async (req) => {
         `Ticket ID: ${inserted.id}\nIssue: ${ticketPayload.issue_type}\nDetails: ${ticketPayload.issue_details ?? "-"}\nUser: ${ticketPayload.nt_user_name ?? "-"} (${ticketPayload.nt_user_id ?? "-"})\nMobile: ${ticketPayload.nt_user_mobile ?? ticketPayload.phone_e164 ?? "-"}\nPage: ${ticketPayload.page_url ?? "-"}`,
       );
 
-      messages.push({ role: "bot", text: `Ticket raised! ID: ${inserted.id}. Team jaldi aapko help karegi.` });
+      messages.push({ role: "bot", text: `Ticket raised! ID: ${inserted.id}. Our team will help you soon.` });
       quick_replies = L1;
       nextState = { flow: "menu" };
       return await respond();
@@ -347,12 +347,12 @@ Deno.serve(async (req) => {
       const p = normalizePhoneToE164(userText);
       if (p.ok) {
         nextState = { ...state, awaiting: "callback_exam", callback_phone_e164: p.e164 };
-        messages.push({ role: "bot", text: "Thanks! Aapka target exam kya hai?" });
+        messages.push({ role: "bot", text: "Thanks! What is your target exam?" });
         quick_replies = EXAM_OPTS;
         return await respond();
       }
       nextState = { ...state, awaiting: "callback_phone", callback_name: userText || null };
-      messages.push({ role: "bot", text: `Thanks${userText ? ` ${userText}` : ""}! Apna mobile number bhej dijiye (10 digits).` });
+      messages.push({ role: "bot", text: `Thanks${userText ? ` ${userText}` : ""}! Please share your mobile number (10 digits).` });
       quick_replies = [{ id: "back_menu", label: "Back to Menu" }];
       return await respond();
     }
@@ -365,7 +365,7 @@ Deno.serve(async (req) => {
         return await respond();
       }
       nextState = { ...state, awaiting: "callback_exam", callback_phone_e164: p.e164 };
-      messages.push({ role: "bot", text: "Great. Aapka target exam kya hai?" });
+      messages.push({ role: "bot", text: "Great. What is your target exam?" });
       quick_replies = EXAM_OPTS;
       return await respond();
     }
@@ -380,7 +380,7 @@ Deno.serve(async (req) => {
       const phone_e164 = state.callback_phone_e164 ?? null;
       if (!phone_e164) {
         nextState = { ...state, awaiting: "callback_phone" };
-        messages.push({ role: "bot", text: "Apna phone number bhej dijiye." });
+        messages.push({ role: "bot", text: "Please share your phone number." });
         quick_replies = [{ id: "back_menu", label: "Back to Menu" }];
         return await respond();
       }
@@ -411,7 +411,7 @@ Deno.serve(async (req) => {
         );
       }
 
-      messages.push({ role: "bot", text: `Noted! Humari team aapko ${phone_e164} par 24 hours ke andar call karegi.` });
+      messages.push({ role: "bot", text: `Noted! Our team will call you at ${phone_e164} within 24 hours.` });
       quick_replies = L1;
       nextState = { flow: "menu" };
       return await respond();
@@ -420,9 +420,9 @@ Deno.serve(async (req) => {
     // Free-text: global handover
     if (type === "text" && isHandoverTrigger(userText)) {
       nextState = { flow: "lead_capture", awaiting: "lead_phone", lead_priority: "high", lead_query_text: userText };
-      messages.push({ role: "bot", text: "Ye fees/discount/installment ka specific request hai. Please apna phone number bhej dijiye, senior counselor 24 hours me call karega." });
+      messages.push({ role: "bot", text: "This is a specific request about fees/discount/installments. Please share your phone number and a senior counselor will call you within 24 hours." });
       if (sessionRow.nt_user_mobile) {
-        messages.push({ role: "bot", text: `Agar aapka number ${sessionRow.nt_user_mobile} hai toh 'yes' reply kar do, ya new number type karo.` });
+        messages.push({ role: "bot", text: `If ${sessionRow.nt_user_mobile} is your number, reply \"yes\"; otherwise enter a new number.` });
       }
       quick_replies = [{ id: "back_menu", label: "Back to Menu" }];
       return await respond();
@@ -441,14 +441,14 @@ Deno.serve(async (req) => {
         case "fees_offers": {
           personaToSet = "lead";
           nextState = { flow: "fees_offers" };
-          messages.push({ role: "bot", text: "Fees kis class ke liye dekhni hai?" });
+          messages.push({ role: "bot", text: "Which class would you like fee details for?" });
           quick_replies = CLASS_OPTS;
           return await respond();
         }
         case "timetable": {
           personaToSet = "student";
           nextState = { flow: "timetable" };
-          messages.push({ role: "bot", text: "Timetable kis class ka chahiye?" });
+          messages.push({ role: "bot", text: "Which class timetable do you need?" });
           quick_replies = CLASS_OPTS;
           return await respond();
         }
@@ -462,7 +462,7 @@ Deno.serve(async (req) => {
         case "callback": {
           personaToSet = "lead";
           nextState = { flow: "callback", awaiting: "callback_name_or_phone" };
-          messages.push({ role: "bot", text: "Sure! Aapka naam? (Optional) Ya seedha apna phone number bhej do." });
+          messages.push({ role: "bot", text: "Sure! What is your name? (Optional) You can also directly share your phone number." });
           quick_replies = [{ id: "back_menu", label: "Back to Menu" }];
           return await respond();
         }
@@ -489,7 +489,7 @@ Deno.serve(async (req) => {
           const { data: offers } = await sb.from("nt_offers").select("title, description, active, valid_from, valid_to").eq("active", true);
           const activeOffers = (offers ?? []).filter((o: any) => (!o.valid_from || o.valid_from <= today) && (!o.valid_to || o.valid_to >= today));
           const offerText = activeOffers.length ? `Offers:\n${activeOffers.map((o: any) => `- ${o.title}: ${o.description}`).join("\n")}` : "Currently no active offers are listed.";
-          messages.push({ role: "bot", text: `Fees for ${course?.batch_name ?? cg}: ₹${course?.price_inr ?? "-"}\n\n${offerText}` });
+          messages.push({ role: "bot", text: `Fees for ${course?.batch_name ?? cg}: INR ${course?.price_inr ?? "-"}\n\n${offerText}` });
           quick_replies = [
             { id: "talk_counselor", label: "Talk to Counselor" },
             { id: "back_menu", label: "Back to Menu" },
@@ -502,7 +502,7 @@ Deno.serve(async (req) => {
           const today = istDateString();
           const { data: entries } = await sb.from("nt_timetable_entries").select("date, start_time, end_time, subject, teacher").eq("batch_key", course?.batch_key ?? "").eq("date", today).order("start_time");
           if (!entries?.length) {
-            messages.push({ role: "bot", text: `Aaj (${today}) ka timetable available nahi hai. Next 7 days dekhna chahoge?` });
+            messages.push({ role: "bot", text: `Today's timetable (${today}) is not available. Would you like to see the next 7 days?` });
             quick_replies = TIMETABLE_OPTS;
             return await respond();
           }
@@ -513,7 +513,7 @@ Deno.serve(async (req) => {
         }
 
         // default
-        messages.push({ role: "bot", text: "Thanks! Main menu se option select kar lo." });
+        messages.push({ role: "bot", text: "Thanks! Please select an option from the main menu." });
         quick_replies = L1;
         nextState = { flow: "menu" };
         return await respond();
@@ -522,7 +522,7 @@ Deno.serve(async (req) => {
       if (selection_id === "check_fees") {
         const batch_key = state.batch_key;
         if (!batch_key) {
-          messages.push({ role: "bot", text: "Pehle class select kijiye." });
+          messages.push({ role: "bot", text: "Please select a class first." });
           quick_replies = CLASS_OPTS;
           nextState = { flow: "new_batches" };
           return await respond();
@@ -534,7 +534,7 @@ Deno.serve(async (req) => {
         const activeOffers = (offers ?? []).filter((o: any) => (!o.valid_from || o.valid_from <= today) && (!o.valid_to || o.valid_to >= today));
         const offerText = activeOffers.length ? `Offers:\n${activeOffers.map((o: any) => `- ${o.title}: ${o.description}`).join("\n")}` : "Currently no active offers are listed.";
 
-        messages.push({ role: "bot", text: `Fees for ${course?.batch_name ?? batch_key}: ₹${course?.price_inr ?? "-"}\n\n${offerText}` });
+        messages.push({ role: "bot", text: `Fees for ${course?.batch_name ?? batch_key}: INR ${course?.price_inr ?? "-"}\n\n${offerText}` });
         if (course?.purchase_url) messages.push({ role: "bot", text: `Enroll: ${course.purchase_url}` });
         quick_replies = [
           { id: "talk_counselor", label: "Talk to Counselor" },
@@ -546,7 +546,7 @@ Deno.serve(async (req) => {
       if (selection_id === "view_syllabus") {
         const batch_key = state.batch_key;
         if (!batch_key) {
-          messages.push({ role: "bot", text: "Pehle class select kijiye." });
+          messages.push({ role: "bot", text: "Please select a class first." });
           quick_replies = CLASS_OPTS;
           nextState = { flow: "new_batches" };
           return await respond();
@@ -559,7 +559,7 @@ Deno.serve(async (req) => {
           return await respond();
         }
 
-        messages.push({ role: "bot", text: "Syllabus link abhi update nahi hai. Aap 'Talk to Counselor' pe click karke call back le sakte ho." });
+        messages.push({ role: "bot", text: "The syllabus link is not updated yet. You can click 'Talk to Counselor' to request a callback." });
         quick_replies = [
           { id: "talk_counselor", label: "Talk to Counselor" },
           { id: "back_menu", label: "Back to Menu" },
@@ -570,8 +570,8 @@ Deno.serve(async (req) => {
       if (selection_id === "talk_counselor") {
         personaToSet = "lead";
         nextState = { ...state, flow: "lead_capture", awaiting: "lead_phone", lead_priority: state.flow === "fees_offers" ? "high" : "normal", lead_query_text: state.flow === "fees_offers" ? "Fee/Offer inquiry" : "Talk to counselor" };
-        messages.push({ role: "bot", text: "Sure! Apna phone number bhej dijiye (10 digits). Hum 24 hours ke andar call karenge." });
-        if (sessionRow.nt_user_mobile) messages.push({ role: "bot", text: `Agar aapka number ${sessionRow.nt_user_mobile} hai toh 'yes' reply kar do, ya new number type karo.` });
+        messages.push({ role: "bot", text: "Sure! Please share your phone number (10 digits). We will call you within 24 hours." });
+        if (sessionRow.nt_user_mobile) messages.push({ role: "bot", text: `If ${sessionRow.nt_user_mobile} is your number, reply \"yes\"; otherwise enter a new number.` });
         quick_replies = [{ id: "back_menu", label: "Back to Menu" }];
         return await respond();
       }
@@ -587,7 +587,7 @@ Deno.serve(async (req) => {
             : "Please try: 1) Check internet 2) Wait 5 minutes and retry 3) Ensure bank OTP/limits are ok.";
         nextState = { ...state, flow: "support", issue_type: issue };
         messages.push({ role: "bot", text: steps });
-        messages.push({ role: "bot", text: "Agar still issue aa raha hai, Raise Ticket pe click kar do." });
+        messages.push({ role: "bot", text: "If the issue still persists, click Raise Ticket." });
         quick_replies = [
           { id: "raise_ticket", label: "Raise Ticket" },
           { id: "back_menu", label: "Back to Menu" },
@@ -598,7 +598,7 @@ Deno.serve(async (req) => {
       if (selection_id === "raise_ticket") {
         personaToSet = "student";
         nextState = { ...state, flow: "support", awaiting: "support_details" };
-        messages.push({ role: "bot", text: "Briefly describe the issue (1-2 lines). (Optional) Phone number bhi bhej dijiye." });
+        messages.push({ role: "bot", text: "Briefly describe the issue (1-2 lines). You may also include your phone number (optional)." });
         quick_replies = [{ id: "back_menu", label: "Back to Menu" }];
         return await respond();
       }
@@ -606,7 +606,7 @@ Deno.serve(async (req) => {
       if (selection_id === "next_7_days") {
         const batch_key = state.batch_key;
         if (!batch_key) {
-          messages.push({ role: "bot", text: "Pehle class select kijiye." });
+          messages.push({ role: "bot", text: "Please select a class first." });
           quick_replies = CLASS_OPTS;
           nextState = { flow: "timetable" };
           return await respond();
@@ -662,7 +662,7 @@ Deno.serve(async (req) => {
             body: JSON.stringify({
               model,
               messages: [
-                { role: "system", content: "You are Next Toppers Smart Counselor. Reply in friendly Hinglish, academic tone. If unsure, ask to choose a menu option or request a callback. Keep answers short." },
+                { role: "system", content: "You are Next Toppers Smart Counselor. Reply in friendly, encouraging English with an academic tone. If unsure, ask the user to choose a menu option or request a callback. Keep answers concise." },
                 { role: "user", content: userText },
               ],
               temperature: 0.4,
@@ -684,7 +684,7 @@ Deno.serve(async (req) => {
         }
       }
 
-      messages.push({ role: "bot", text: "Main is question ka exact answer abhi confirm nahi kar pa raha. Aap menu se option select kar lo ya Request Call Back choose karo." });
+      messages.push({ role: "bot", text: "I cannot confirm the exact answer right now. Please choose an option from the menu or select Request Call Back." });
       quick_replies = L1;
       nextState = { flow: "menu" };
       return await respond();
@@ -699,4 +699,3 @@ Deno.serve(async (req) => {
     return json({ error: msg }, 500);
   }
 });
-
