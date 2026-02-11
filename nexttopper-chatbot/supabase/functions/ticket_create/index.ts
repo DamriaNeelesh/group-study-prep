@@ -92,7 +92,7 @@ Deno.serve(async (req) => {
     };
 
     const { data: inserted, error } = await sb
-      .from("support_tickets")
+      .from("nt_support_tickets")
       .insert(ticketPayload)
       .select("id")
       .single();

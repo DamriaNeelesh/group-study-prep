@@ -31,7 +31,7 @@ export function useProfile(session: Session | null): {
 
     (async () => {
       const { data, error } = await supabase
-        .from('profiles')
+        .from('nt_profiles')
         .select('id, display_name, role')
         .eq('id', session.user.id)
         .maybeSingle();

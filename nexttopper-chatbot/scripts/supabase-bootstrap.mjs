@@ -276,13 +276,13 @@ async function main() {
 
   await execSql(
     token,
-    `insert into public.profiles (id, display_name, role)\n` +
+    `insert into public.nt_profiles (id, display_name, role)\n` +
       `values ('${adminUser.id}', 'Admin', 'admin')\n` +
       `on conflict (id) do update set display_name = excluded.display_name, role = excluded.role;`
   );
   await execSql(
     token,
-    `insert into public.profiles (id, display_name, role)\n` +
+    `insert into public.nt_profiles (id, display_name, role)\n` +
       `values ('${counselorUser.id}', 'Counselor', 'counselor')\n` +
       `on conflict (id) do update set display_name = excluded.display_name, role = excluded.role;`
   );

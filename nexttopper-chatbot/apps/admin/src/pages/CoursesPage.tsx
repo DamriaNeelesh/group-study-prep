@@ -50,7 +50,7 @@ export function CoursesPage() {
     setLoading(true);
     setError(null);
     const { data, error } = await supabase
-      .from('course_catalog')
+      .from('nt_course_catalog')
       .select('*')
       .order('updated_at', { ascending: false });
     if (error) setError(error.message);
@@ -109,14 +109,14 @@ export function CoursesPage() {
     }
 
     if (editing.mode === 'new') {
-      const { error } = await supabase.from('course_catalog').insert(payload);
+      const { error } = await supabase.from('nt_course_catalog').insert(payload);
       if (error) {
         setError(error.message);
         return;
       }
     } else {
       const { error } = await supabase
-        .from('course_catalog')
+        .from('nt_course_catalog')
         .update(payload)
         .eq('id', editing.id);
       if (error) {
@@ -131,7 +131,7 @@ export function CoursesPage() {
 
   async function remove(id: string) {
     if (!confirm('Delete this course?')) return;
-    const { error } = await supabase.from('course_catalog').delete().eq('id', id);
+    const { error } = await supabase.from('nt_course_catalog').delete().eq('id', id);
     if (error) setError(error.message);
     await load();
   }

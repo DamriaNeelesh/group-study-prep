@@ -25,7 +25,7 @@ export function TicketsPage() {
     setLoading(true);
     setError(null);
     const { data, error } = await supabase
-      .from('support_tickets')
+      .from('nt_support_tickets')
       .select(
         'id, issue_type, issue_details, nt_user_id, nt_user_name, nt_user_mobile, phone_e164, page_url, status, created_at'
       )
@@ -42,7 +42,7 @@ export function TicketsPage() {
 
   async function updateStatus(id: string, status: Ticket['status']) {
     const { error } = await supabase
-      .from('support_tickets')
+      .from('nt_support_tickets')
       .update({ status })
       .eq('id', id);
     if (error) {

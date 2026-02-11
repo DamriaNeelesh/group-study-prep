@@ -164,7 +164,7 @@ async function sendResendEmail(to: string, subject: string, text: string) {
 async function getCourseForClassGroup(sb: ReturnType<typeof getSupabaseAdmin>, classGroup: "9" | "10" | "11_12") {
   const baseSelect = "batch_key, batch_name, class_group, price_inr, start_date, status, syllabus_url, purchase_url, highlights, updated_at";
   const { data: open } = await sb
-    .from("course_catalog")
+    .from("nt_course_catalog")
     .select(baseSelect)
     .eq("class_group", classGroup)
     .eq("status", "open")
@@ -173,7 +173,7 @@ async function getCourseForClassGroup(sb: ReturnType<typeof getSupabaseAdmin>, c
     .maybeSingle();
   if (open) return open as any;
   const { data: anyRow } = await sb
-    .from("course_catalog")
+    .from("nt_course_catalog")
     .select(baseSelect)
     .eq("class_group", classGroup)
     .order("updated_at", { ascending: false })
@@ -209,10 +209,10 @@ Deno.serve(async (req) => {
     const userText = type === "text" ? String(body?.text ?? "").trim() : String(body?.selection_id ?? "").trim();
     const selection_id = type === "select" ? String(body?.selection_id ?? "").trim() : "";
 
-    await sb.from("chat_messages").insert({ session_id, role: "user", content: userText, meta: { type, page_url } });
+    await sb.from("nt_chat_messages").insert({ session_id, role: "user", content: userText, meta: { type, page_url } });
 
     const { data: sessionRow } = await sb
-      .from("chat_sessions")
+      .from("nt_chat_sessions")
       .select("id, state, nt_user_id, nt_user_name, nt_user_mobile")
       .eq("id", session_id)
       .maybeSingle();
@@ -227,7 +227,7 @@ Deno.serve(async (req) => {
 
     const respond = async () => {
       await sb
-        .from("chat_sessions")
+        .from("nt_chat_sessions")
         .update({
           state: nextState,
           ...(personaToSet ? { persona: personaToSet } : {}),
@@ -235,7 +235,7 @@ Deno.serve(async (req) => {
         .eq("id", session_id);
 
       if (messages.length) {
-        await sb.from("chat_messages").insert(
+        await sb.from("nt_chat_messages").insert(
           messages.map((m) => ({ session_id, role: "bot", content: m.text, meta: { page_url } })),
         );
       }
@@ -281,7 +281,7 @@ Deno.serve(async (req) => {
         status: "new",
       };
 
-      const { error: leadErr } = await sb.from("leads").insert(leadPayload);
+      const { error: leadErr } = await sb.from("nt_leads").insert(leadPayload);
       if (leadErr) throw leadErr;
 
       const salesTo = Deno.env.get("SALES_ALERT_EMAIL");
@@ -323,7 +323,7 @@ Deno.serve(async (req) => {
       };
 
       const { data: inserted, error: tErr } = await sb
-        .from("support_tickets")
+        .from("nt_support_tickets")
         .insert(ticketPayload)
         .select("id")
         .single();
@@ -399,7 +399,7 @@ Deno.serve(async (req) => {
         status: "new",
       };
 
-      const { error: leadErr } = await sb.from("leads").insert(leadPayload);
+      const { error: leadErr } = await sb.from("nt_leads").insert(leadPayload);
       if (leadErr) throw leadErr;
 
       const salesTo = Deno.env.get("SALES_ALERT_EMAIL");
@@ -486,7 +486,7 @@ Deno.serve(async (req) => {
         if (state.flow === "fees_offers") {
           personaToSet = "lead";
           const today = istDateString();
-          const { data: offers } = await sb.from("offers").select("title, description, active, valid_from, valid_to").eq("active", true);
+          const { data: offers } = await sb.from("nt_offers").select("title, description, active, valid_from, valid_to").eq("active", true);
           const activeOffers = (offers ?? []).filter((o: any) => (!o.valid_from || o.valid_from <= today) && (!o.valid_to || o.valid_to >= today));
           const offerText = activeOffers.length ? `Offers:\n${activeOffers.map((o: any) => `- ${o.title}: ${o.description}`).join("\n")}` : "Currently no active offers are listed.";
           messages.push({ role: "bot", text: `Fees for ${course?.batch_name ?? cg}: ₹${course?.price_inr ?? "-"}\n\n${offerText}` });
@@ -500,7 +500,7 @@ Deno.serve(async (req) => {
         if (state.flow === "timetable") {
           personaToSet = "student";
           const today = istDateString();
-          const { data: entries } = await sb.from("timetable_entries").select("date, start_time, end_time, subject, teacher").eq("batch_key", course?.batch_key ?? "").eq("date", today).order("start_time");
+          const { data: entries } = await sb.from("nt_timetable_entries").select("date, start_time, end_time, subject, teacher").eq("batch_key", course?.batch_key ?? "").eq("date", today).order("start_time");
           if (!entries?.length) {
             messages.push({ role: "bot", text: `Aaj (${today}) ka timetable available nahi hai. Next 7 days dekhna chahoge?` });
             quick_replies = TIMETABLE_OPTS;
@@ -528,9 +528,9 @@ Deno.serve(async (req) => {
           return await respond();
         }
 
-        const { data: course } = await sb.from("course_catalog").select("batch_name, price_inr, purchase_url").eq("batch_key", batch_key).maybeSingle();
+        const { data: course } = await sb.from("nt_course_catalog").select("batch_name, price_inr, purchase_url").eq("batch_key", batch_key).maybeSingle();
         const today = istDateString();
-        const { data: offers } = await sb.from("offers").select("title, description, active, valid_from, valid_to").eq("active", true);
+        const { data: offers } = await sb.from("nt_offers").select("title, description, active, valid_from, valid_to").eq("active", true);
         const activeOffers = (offers ?? []).filter((o: any) => (!o.valid_from || o.valid_from <= today) && (!o.valid_to || o.valid_to >= today));
         const offerText = activeOffers.length ? `Offers:\n${activeOffers.map((o: any) => `- ${o.title}: ${o.description}`).join("\n")}` : "Currently no active offers are listed.";
 
@@ -552,7 +552,7 @@ Deno.serve(async (req) => {
           return await respond();
         }
 
-        const { data: course } = await sb.from("course_catalog").select("batch_name, syllabus_url").eq("batch_key", batch_key).maybeSingle();
+        const { data: course } = await sb.from("nt_course_catalog").select("batch_name, syllabus_url").eq("batch_key", batch_key).maybeSingle();
         if (course?.syllabus_url) {
           messages.push({ role: "bot", text: `Syllabus for ${course.batch_name}:\n${course.syllabus_url}` });
           quick_replies = [{ id: "back_menu", label: "Back to Menu" }];
@@ -613,7 +613,7 @@ Deno.serve(async (req) => {
         }
         const start = istDateString();
         const end = addDaysIsoDate(start, 6);
-        const { data: entries } = await sb.from("timetable_entries").select("date, start_time, end_time, subject, teacher").eq("batch_key", batch_key).gte("date", start).lte("date", end).order("date").order("start_time");
+        const { data: entries } = await sb.from("nt_timetable_entries").select("date, start_time, end_time, subject, teacher").eq("batch_key", batch_key).gte("date", start).lte("date", end).order("date").order("start_time");
         if (!entries?.length) {
           messages.push({ role: "bot", text: `No timetable found for next 7 days (${start} to ${end}).` });
           quick_replies = [{ id: "back_menu", label: "Back to Menu" }];
@@ -640,7 +640,7 @@ Deno.serve(async (req) => {
     // Text fallback: KB -> LLM -> menu
     if (type === "text") {
       const { data: kb } = await sb
-        .from("kb_articles")
+        .from("nt_kb_articles")
         .select("content")
         .textSearch("search", userText, { type: "plain", config: "simple" })
         .limit(1);

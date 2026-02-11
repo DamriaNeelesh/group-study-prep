@@ -91,7 +91,7 @@ Deno.serve(async (req) => {
       status: "new",
     };
 
-    const { error } = await sb.from("leads").insert(payload);
+    const { error } = await sb.from("nt_leads").insert(payload);
     if (error) throw error;
 
     const salesTo = Deno.env.get("SALES_ALERT_EMAIL");

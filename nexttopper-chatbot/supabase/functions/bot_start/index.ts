@@ -66,7 +66,7 @@ Deno.serve(async (req) => {
     const supabase = getSupabaseAdmin();
 
     const { data: session, error: sessionErr } = await supabase
-      .from("chat_sessions")
+      .from("nt_chat_sessions")
       .insert({
         visitor_id,
         nt_user_id: nt_user.id ?? null,
@@ -87,12 +87,12 @@ Deno.serve(async (req) => {
       let enrolledBatch: string | null = null;
       if (nt_user.id) {
         const { data: enr } = await supabase
-          .from("user_enrollments")
-          .select("batch_key, course_catalog(batch_name)")
+          .from("nt_user_enrollments")
+          .select("batch_key, nt_course_catalog(batch_name)")
           .eq("nt_user_id", nt_user.id)
           .maybeSingle();
         // @ts-ignore: supabase nested select typing
-        enrolledBatch = enr?.course_catalog?.batch_name ?? null;
+        enrolledBatch = enr?.nt_course_catalog?.batch_name ?? null;
       }
 
       greeting = enrolledBatch
@@ -110,7 +110,7 @@ Deno.serve(async (req) => {
     ];
 
     // Log bot messages
-    await supabase.from("chat_messages").insert(
+    await supabase.from("nt_chat_messages").insert(
       messages.map((m) => ({
         session_id: session.id,
         role: "bot",
@@ -137,4 +137,3 @@ Deno.serve(async (req) => {
     });
   }
 });
-

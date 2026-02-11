@@ -35,7 +35,7 @@ export function OffersPage() {
     setLoading(true);
     setError(null);
     const { data, error } = await supabase
-      .from('offers')
+      .from('nt_offers')
       .select('*')
       .order('active', { ascending: false });
     if (error) setError(error.message);
@@ -81,13 +81,13 @@ export function OffersPage() {
     }
 
     if (editing.mode === 'new') {
-      const { error } = await supabase.from('offers').insert(payload);
+      const { error } = await supabase.from('nt_offers').insert(payload);
       if (error) {
         setError(error.message);
         return;
       }
     } else {
-      const { error } = await supabase.from('offers').update(payload).eq('id', editing.id);
+      const { error } = await supabase.from('nt_offers').update(payload).eq('id', editing.id);
       if (error) {
         setError(error.message);
         return;
@@ -100,7 +100,7 @@ export function OffersPage() {
 
   async function remove(id: string) {
     if (!confirm('Delete this offer?')) return;
-    const { error } = await supabase.from('offers').delete().eq('id', id);
+    const { error } = await supabase.from('nt_offers').delete().eq('id', id);
     if (error) setError(error.message);
     await load();
   }

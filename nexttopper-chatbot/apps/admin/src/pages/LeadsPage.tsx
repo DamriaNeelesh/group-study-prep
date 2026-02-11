@@ -27,7 +27,7 @@ export function LeadsPage() {
     setLoading(true);
     setError(null);
     const { data, error } = await supabase
-      .from('leads')
+      .from('nt_leads')
       .select(
         'id, persona, name, phone_e164, class_moving_to, target_exam, query_text, source, page_url, priority, status, created_at'
       )
@@ -43,7 +43,7 @@ export function LeadsPage() {
   }, []);
 
   async function updateStatus(id: string, status: Lead['status']) {
-    const { error } = await supabase.from('leads').update({ status }).eq('id', id);
+    const { error } = await supabase.from('nt_leads').update({ status }).eq('id', id);
     if (error) {
       setError(error.message);
       return;

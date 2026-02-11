@@ -46,7 +46,7 @@ export function TimetablePage() {
   useEffect(() => {
     (async () => {
       const { data } = await supabase
-        .from('course_catalog')
+        .from('nt_course_catalog')
         .select('batch_key, batch_name')
         .order('batch_key', { ascending: true });
       const list = ((data ?? []) as Course[]) ?? [];
@@ -61,7 +61,7 @@ export function TimetablePage() {
     setLoading(true);
     setError(null);
     const { data, error } = await supabase
-      .from('timetable_entries')
+      .from('nt_timetable_entries')
       .select('*')
       .eq('batch_key', batchKey)
       .eq('date', date)
@@ -122,14 +122,14 @@ export function TimetablePage() {
     }
 
     if (editing.mode === 'new') {
-      const { error } = await supabase.from('timetable_entries').insert(payload);
+      const { error } = await supabase.from('nt_timetable_entries').insert(payload);
       if (error) {
         setError(error.message);
         return;
       }
     } else {
       const { error } = await supabase
-        .from('timetable_entries')
+        .from('nt_timetable_entries')
         .update(payload)
         .eq('id', editing.id);
       if (error) {
@@ -144,7 +144,7 @@ export function TimetablePage() {
 
   async function remove(id: string) {
     if (!confirm('Delete this entry?')) return;
-    const { error } = await supabase.from('timetable_entries').delete().eq('id', id);
+    const { error } = await supabase.from('nt_timetable_entries').delete().eq('id', id);
     if (error) setError(error.message);
     await load();
   }
