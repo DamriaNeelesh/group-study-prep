@@ -335,7 +335,10 @@ function GuestNameModal({ userId, onSubmit }: GuestNameModalProps) {
 
         setSubmitting(true);
         try {
-            const { error } = await getSupabaseBrowserClient()
+            const supabase = getSupabaseBrowserClient();
+            if (!supabase) throw new Error("Supabase client not initialized");
+
+            const { error } = await supabase
                 .from("profiles")
                 .upsert({ id: userId, display_name: name.trim() }, { onConflict: "id" });
 
