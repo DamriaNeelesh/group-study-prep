@@ -1,38 +1,25 @@
 "use client";
 
-import { useParams } from "next/navigation";
-import { LectureRoom } from "@/components/LectureRoom";
-import { useSupabaseAuth } from "@/hooks/useSupabaseAuth";
+import { useEffect } from "react";
+import { useParams, useRouter } from "next/navigation";
+import { extractRoomIdFromInput } from "@/lib/roomId";
 
 export default function LectureRoomPage() {
-    const params = useParams();
-    const roomId = params?.id as string | undefined;
-    const auth = useSupabaseAuth();
+  const params = useParams<{ id?: string | string[] }>();
+  const router = useRouter();
+  const rawId = typeof params.id === "string" ? params.id : params.id?.[0] ?? "";
+  const roomId = extractRoomIdFromInput(rawId) ?? rawId;
 
-    if (!roomId) {
-        return (
-            <div className="flex h-screen items-center justify-center bg-black">
-                <div className="text-white text-xl">Invalid room ID</div>
-            </div>
-        );
-    }
+  useEffect(() => {
+    if (!roomId) return;
+    router.replace(`/room/${roomId}`);
+  }, [roomId, router]);
 
-    if (auth.error) {
-        return (
-            <div className="flex h-screen items-center justify-center bg-black">
-                <div className="text-red-500 text-xl">{auth.error}</div>
-            </div>
-        );
-    }
-
-    // Ensure every lecture link works in a fresh browser (guests auto-sign-in).
-    if (auth.isLoading || !auth.user) {
-        return (
-            <div className="flex h-screen items-center justify-center bg-black">
-                <div className="text-white text-xl">Signing you in...</div>
-            </div>
-        );
-    }
-
-    return <LectureRoom roomId={roomId} />;
+  return (
+    <div className="flex h-screen items-center justify-center bg-[#111]">
+      <div className="text-lg font-semibold text-white/90">
+        Opening room...
+      </div>
+    </div>
+  );
 }

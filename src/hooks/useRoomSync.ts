@@ -190,14 +190,6 @@ export function useRoomSync(args: {
       if (!roomId) return null;
       if (!supabase) return null;
 
-      // Basic host-only gating on the client to prevent accidental "anyone can pause everyone"
-      // in the legacy Supabase Realtime sync mode. For full enforcement, use StudyRoom v2 SQL + socket backend.
-      const createdBy = state.room?.createdBy ?? null;
-      if (createdBy && userId && createdBy !== userId) {
-        setState((s) => ({ ...s, toast: "Only the host can control playback in this room." }));
-        return null;
-      }
-
       const { data, error } = await supabase
         .from("rooms")
         .update(patch)
@@ -214,17 +206,12 @@ export function useRoomSync(args: {
       setState((s) => ({ ...s, room: next }));
       return next;
     },
-    [roomId, state.room?.createdBy, supabase, userId],
+    [roomId, supabase],
   );
 
   const setVideo = useCallback(
     async (videoId: string | null) => {
       if (!roomId || !userId) return;
-      const createdBy = state.room?.createdBy ?? null;
-      if (createdBy && createdBy !== userId) {
-        setState((s) => ({ ...s, toast: "Only the host can set the video." }));
-        return;
-      }
       const at = new Date().toISOString();
 
       const next = await updateRoomRow({
@@ -246,14 +233,12 @@ export function useRoomSync(args: {
         updatedAt: next.updatedAt,
       });
     },
-    [roomId, sendRoomEvent, state.room?.createdBy, updateRoomRow, userId],
+    [roomId, sendRoomEvent, updateRoomRow, userId],
   );
 
   const play = useCallback(
     async (positionSeconds: number) => {
       if (!roomId || !userId) return;
-      const createdBy = state.room?.createdBy ?? null;
-      if (createdBy && createdBy !== userId) return;
       const at = new Date().toISOString();
 
       const next = await updateRoomRow({
@@ -273,14 +258,12 @@ export function useRoomSync(args: {
         updatedAt: next.updatedAt,
       });
     },
-    [roomId, sendRoomEvent, state.room?.createdBy, updateRoomRow, userId],
+    [roomId, sendRoomEvent, updateRoomRow, userId],
   );
 
   const pause = useCallback(
     async (positionSeconds: number) => {
       if (!roomId || !userId) return;
-      const createdBy = state.room?.createdBy ?? null;
-      if (createdBy && createdBy !== userId) return;
       const at = new Date().toISOString();
 
       const next = await updateRoomRow({
@@ -300,14 +283,12 @@ export function useRoomSync(args: {
         updatedAt: next.updatedAt,
       });
     },
-    [roomId, sendRoomEvent, state.room?.createdBy, updateRoomRow, userId],
+    [roomId, sendRoomEvent, updateRoomRow, userId],
   );
 
   const seek = useCallback(
     async (positionSeconds: number) => {
       if (!roomId || !userId) return;
-      const createdBy = state.room?.createdBy ?? null;
-      if (createdBy && createdBy !== userId) return;
       const at = new Date().toISOString();
 
       const next = await updateRoomRow({
@@ -326,7 +307,7 @@ export function useRoomSync(args: {
         updatedAt: next.updatedAt,
       });
     },
-    [roomId, sendRoomEvent, state.room?.createdBy, updateRoomRow, userId],
+    [roomId, sendRoomEvent, updateRoomRow, userId],
   );
 
   const raiseHand = useCallback(async () => {

@@ -8,6 +8,15 @@ import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 
 type PlaybackState = "playing" | "paused";
 
+export type RoomChatMessage = {
+  id: string;
+  roomId: string;
+  userId: string;
+  displayName: string;
+  message: string;
+  atMs: number;
+};
+
 export type RoomStateV2 = {
   roomId: string;
   name: string;
@@ -43,6 +52,7 @@ type UseRoomSyncSocketState = {
   error: string | null;
   room: RoomStateV2 | null;
   onlineCount: number;
+  chatMessages: RoomChatMessage[];
   toast: string | null;
   lastRaiseHand: { fromUserId: string; at: string } | null;
   offsetMs: number;
@@ -50,11 +60,21 @@ type UseRoomSyncSocketState = {
 };
 
 type JoinOrStateResponse =
-  | { ok: true; state: RoomStateV2; pending: RoomAction[]; onlineCount: number }
+  | {
+      ok: true;
+      state: RoomStateV2;
+      pending: RoomAction[];
+      onlineCount: number;
+      chat: RoomChatMessage[];
+    }
   | { ok: false; error: string };
 
 type CommandResponse =
   | { ok: true; action?: RoomAction }
+  | { ok: false; error?: string; retryAfterMs?: number };
+
+type ChatSendResponse =
+  | { ok: true; message?: RoomChatMessage }
   | { ok: false; error?: string; retryAfterMs?: number };
 
 function clampNonNegative(n: number) {
@@ -76,15 +96,44 @@ function parseJoinOrStateResponse(res: unknown): JoinOrStateResponse {
   const state = res.state as unknown;
   const pending = res.pending as unknown;
   const onlineCount = res.onlineCount as unknown;
+  const chat = res.chat as unknown;
 
   if (!isRecord(state)) return { ok: false, error: "bad_state" };
   if (!Array.isArray(pending)) return { ok: false, error: "bad_pending" };
+
+  const parsedChat: RoomChatMessage[] = Array.isArray(chat)
+    ? chat
+        .map((item) => {
+          if (!isRecord(item)) return null;
+          const id = typeof item.id === "string" ? item.id : "";
+          const roomId = typeof item.roomId === "string" ? item.roomId : "";
+          const userId = typeof item.userId === "string" ? item.userId : "";
+          const displayName = typeof item.displayName === "string" ? item.displayName : "";
+          const message = typeof item.message === "string" ? item.message : "";
+          const atMs = typeof item.atMs === "number" ? item.atMs : Number(item.atMs ?? 0);
+          if (!id || !roomId || !userId || !displayName || !message || !Number.isFinite(atMs)) {
+            return null;
+          }
+          return {
+            id,
+            roomId,
+            userId,
+            displayName,
+            message,
+            atMs,
+          } satisfies RoomChatMessage;
+        })
+        .filter(Boolean) as RoomChatMessage[]
+    : [];
+
+  parsedChat.sort((a, b) => a.atMs - b.atMs);
 
   return {
     ok: true,
     state: state as RoomStateV2,
     pending: pending as RoomAction[],
     onlineCount: typeof onlineCount === "number" ? onlineCount : Number(onlineCount ?? 0) || 0,
+    chat: parsedChat,
   };
 }
 
@@ -189,6 +238,7 @@ export function useRoomSyncSocket(args: {
     error: missingEnvError,
     room: null,
     onlineCount: 0,
+    chatMessages: [],
     toast: null,
     lastRaiseHand: null,
     offsetMs: 0,
@@ -293,6 +343,7 @@ export function useRoomSyncSocket(args: {
       error: null,
       room: resp.state,
       onlineCount: Number(resp.onlineCount ?? 0) || 0,
+      chatMessages: resp.chat || [],
     }));
     for (const a of resp.pending || []) scheduleAction(a);
   }, [clearActionTimers, scheduleAction]);
@@ -365,7 +416,10 @@ export function useRoomSyncSocket(args: {
           // ignore
         }
 
-        socket.emit("room:join", { roomId: args.roomId }, (res: unknown) => {
+        socket.emit(
+          "room:join",
+          { roomId: args.roomId, displayName: args.displayName },
+          (res: unknown) => {
           const r = parseJoinOrStateResponse(res);
           if (!r.ok) {
             setState((s) => ({
@@ -384,10 +438,12 @@ export function useRoomSyncSocket(args: {
             error: null,
             room: r.state,
             onlineCount: Number(r.onlineCount ?? 0) || 0,
+            chatMessages: r.chat || [],
           }));
 
           for (const a of r.pending || []) scheduleAction(a);
-        });
+          },
+        );
       })();
     });
 
@@ -468,6 +524,39 @@ export function useRoomSyncSocket(args: {
 
     socket.on("room:action", (action: RoomAction) => {
       scheduleAction(action);
+    });
+
+    socket.on("chat:message", (payload: unknown) => {
+      if (!isRecord(payload)) return;
+      const id = typeof payload.id === "string" ? payload.id : "";
+      const roomId = typeof payload.roomId === "string" ? payload.roomId : "";
+      const userId = typeof payload.userId === "string" ? payload.userId : "";
+      const displayName =
+        typeof payload.displayName === "string" ? payload.displayName : "";
+      const message = typeof payload.message === "string" ? payload.message : "";
+      const atMs =
+        typeof payload.atMs === "number" ? payload.atMs : Number(payload.atMs ?? 0);
+
+      if (!id || !roomId || !userId || !displayName || !message || !Number.isFinite(atMs)) {
+        return;
+      }
+      if (roomId !== args.roomId) return;
+
+      const nextMessage: RoomChatMessage = {
+        id,
+        roomId,
+        userId,
+        displayName,
+        message,
+        atMs,
+      };
+
+      setState((s) => {
+        if (s.chatMessages.some((m) => m.id === nextMessage.id)) return s;
+        const next = [...s.chatMessages, nextMessage];
+        next.sort((a, b) => a.atMs - b.atMs);
+        return { ...s, chatMessages: next.slice(-120) };
+      });
     });
 
     void (async () => {
@@ -564,13 +653,53 @@ export function useRoomSyncSocket(args: {
     return resp;
   }, []);
 
+  const sendChat = useCallback(
+    async (message: string) => {
+      const socket = socketRef.current;
+      if (!socket || !socket.connected) {
+        return { ok: false, error: "not_connected" } as const;
+      }
+
+      const trimmed = message.trim();
+      if (!trimmed) return { ok: false, error: "empty_message" } as const;
+
+      const resp = await new Promise<ChatSendResponse>((resolve) => {
+        socket.emit(
+          "chat:send",
+          { message: trimmed, displayName: args.displayName },
+          (res: unknown) => {
+            if (!isRecord(res)) return resolve({ ok: false, error: "bad_response" });
+            if (res.ok === true) {
+              return resolve({
+                ok: true,
+                message: isRecord(res.message) ? (res.message as RoomChatMessage) : undefined,
+              });
+            }
+            resolve({
+              ok: false,
+              error: typeof res.error === "string" ? res.error : "request_failed",
+              retryAfterMs: typeof res.retryAfterMs === "number" ? res.retryAfterMs : undefined,
+            });
+          },
+        );
+      });
+
+      if (!resp.ok) {
+        setState((s) => ({
+          ...s,
+          error:
+            resp.error === "rate_limited"
+              ? "You are sending messages too fast. Try again in a moment."
+              : s.error,
+        }));
+      }
+      return resp;
+    },
+    [args.displayName],
+  );
+
   const canControl = useMemo(() => {
-    const room = state.room;
-    const userId = args.userId;
-    if (!room || !userId) return false;
-    const controller = room.controllerUserId || room.createdBy;
-    if (!controller) return true;
-    return controller === userId;
+    return Boolean(args.userId && state.room);
   }, [args.userId, state.room]);
 
   const effectivePlaybackPositionSeconds = useMemo(() => {
@@ -649,6 +778,7 @@ export function useRoomSyncSocket(args: {
       });
       return resp;
     },
+    sendChat,
     setVideo: async (videoId: string | null) => {
       const res = await sendCommand({ type: "video:set", videoId });
       if (!res.ok) setState((s) => ({ ...s, error: res.error || "Command failed" }));

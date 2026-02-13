@@ -2,7 +2,7 @@ const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 const ROOM_PATH_RE =
-  /\/room\/([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})/i;
+  /\/(?:room|lecture)\/([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})/i;
 
 export function isUuid(input: string) {
   return UUID_RE.test(input.trim());
@@ -27,7 +27,10 @@ export function extractRoomIdFromInput(input: string): string | null {
   try {
     const url = new URL(trimmed);
     const parts = url.pathname.split("/").filter(Boolean);
-    const roomIdx = parts.findIndex((p) => p.toLowerCase() === "room");
+    const roomIdx = parts.findIndex((p) => {
+      const n = p.toLowerCase();
+      return n === "room" || n === "lecture";
+    });
     const candidate = roomIdx >= 0 ? (parts[roomIdx + 1] ?? "") : "";
     if (UUID_RE.test(candidate)) return candidate.toLowerCase();
   } catch {
@@ -36,4 +39,3 @@ export function extractRoomIdFromInput(input: string): string | null {
 
   return null;
 }
-

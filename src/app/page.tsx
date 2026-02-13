@@ -6,7 +6,6 @@ import { useRouter } from "next/navigation";
 import { useSupabaseAuth } from "@/hooks/useSupabaseAuth";
 import { SiteHeader } from "@/components/SiteHeader";
 import { Toast } from "@/components/Toast";
-import { lectureApi } from "@/lib/lectureApi";
 import {
   extractRoomIdFromInput,
   looksLikeShortRoomCode,
@@ -33,13 +32,20 @@ export default function HomePage() {
     setDisplayNameInput(auth.displayName);
   }, [auth.displayName, auth.user?.id]);
 
-  async function createRoom() {
+async function createRoom() {
     if (!auth.user) return;
     setError(null);
     setBusy(true);
     try {
-      const room = await lectureApi.createRoom();
-      router.push(`/lecture/${room.room_id}`);
+      const roomId =
+        typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+          ? crypto.randomUUID()
+          : "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+              const r = Math.floor(Math.random() * 16);
+              const v = c === "x" ? r : (r & 0x3) | 0x8;
+              return v.toString(16);
+            });
+      router.push(`/room/${roomId}`);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -51,12 +57,12 @@ export default function HomePage() {
     const input = roomId.trim();
     if (!input) return;
 
-    // Support full URLs like http://localhost:3000/lecture/uuid
+    // Support full URLs like http://localhost:3000/room/uuid or old /lecture/uuid links.
     let id = input;
     try {
       if (input.includes("/lecture/")) {
         id = input.split("/lecture/")[1].split("?")[0];
-      } else if (input.includes("/room/")) { // Old style
+      } else if (input.includes("/room/")) {
         id = input.split("/room/")[1].split("?")[0];
       }
     } catch { }
@@ -67,13 +73,13 @@ export default function HomePage() {
       setError(
         looksLikeShortRoomCode(input)
           ? "That looks like only the first 8 characters. Paste the full Room ID (UUID) or the full room link."
-          : "Please paste a full Room ID (UUID) or a full room link like /lecture/<uuid>.",
+          : "Please paste a full Room ID (UUID) or a full room link like /room/<uuid>.",
       );
       return;
     }
 
     setError(null);
-    router.push(`/lecture/${id}`);
+    router.push(`/room/${id}`);
   }
 
   return (
@@ -108,6 +114,9 @@ export default function HomePage() {
                 </span>
                 <span className="rounded-full border border-white/15 bg-black/20 px-3 py-2">
                   Meet (Beta)
+                </span>
+                <span className="rounded-full border border-white/15 bg-black/20 px-3 py-2">
+                  Chat
                 </span>
                 <span className="rounded-full border border-white/15 bg-black/20 px-3 py-2">
                   Raise Hand

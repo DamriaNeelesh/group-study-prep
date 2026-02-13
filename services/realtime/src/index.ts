@@ -32,6 +32,16 @@ type SocketData = {
   isAnonymous: boolean;
   roomId?: string;
   ip?: string;
+  displayName?: string;
+};
+
+type ChatMessage = {
+  id: string;
+  roomId: string;
+  userId: string;
+  displayName: string;
+  message: string;
+  atMs: number;
 };
 
 const log = pino({
@@ -50,6 +60,8 @@ const SYNC_SEEK_BUFFER_MS = envInt("SYNC_SEEK_BUFFER_MS", 2500);
 const AUDIENCE_DELAY_SECONDS_DEFAULT = envInt("AUDIENCE_DELAY_SECONDS_DEFAULT", 0);
 const ROOM_MAX_STAGE = envInt("ROOM_MAX_STAGE", 20);
 const ROOM_MAX_TABLE = envInt("ROOM_MAX_TABLE", 8);
+const CHAT_MAX_MESSAGES = envInt("CHAT_MAX_MESSAGES", 120);
+const CHAT_TTL_SEC = envInt("CHAT_TTL_SEC", 60 * 60 * 12);
 
 const LIVEKIT_URL = optionalEnv("LIVEKIT_URL");
 const LIVEKIT_API_KEY = optionalEnv("LIVEKIT_API_KEY");
@@ -123,6 +135,21 @@ function defaultParticipantName(userId: string, isAnonymous: boolean): string {
   return isAnonymous ? `Guest ${short}` : `Student ${short}`;
 }
 
+function sanitizeChatMessage(input: unknown): string | null {
+  if (typeof input !== "string") return null;
+  const cleaned = input
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n")
+    .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, "")
+    .trim()
+    .slice(0, 500);
+  return cleaned.length > 0 ? cleaned : null;
+}
+
+function createChatId() {
+  return `${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+}
+
 function livekitParticipantIdentity(userId: string, identitySuffix: string, socketId: string): string {
   const suffix = identitySuffix || socketId;
   // LiveKit requires identity to be unique per room; userId alone breaks multi-device joins.
@@ -187,6 +214,50 @@ async function main() {
 
   const pendingKey = (roomId: string) => `room:pending:${roomId}`;
   const lockKey = (roomId: string) => `lock:roomAdvance:${roomId}`;
+  const chatKey = (roomId: string) => `room:chat:${roomId}`;
+
+  async function loadChatHistory(roomId: string): Promise<ChatMessage[]> {
+    const items = await redis.lRange(chatKey(roomId), -CHAT_MAX_MESSAGES, -1);
+    const parsed = items
+      .map((raw) => {
+        try {
+          const v = JSON.parse(raw) as Partial<ChatMessage>;
+          if (
+            !v ||
+            typeof v !== "object" ||
+            typeof v.id !== "string" ||
+            typeof v.userId !== "string" ||
+            typeof v.roomId !== "string" ||
+            typeof v.displayName !== "string" ||
+            typeof v.message !== "string" ||
+            typeof v.atMs !== "number"
+          ) {
+            return null;
+          }
+          return {
+            id: v.id,
+            userId: v.userId,
+            roomId: v.roomId,
+            displayName: v.displayName,
+            message: v.message,
+            atMs: v.atMs,
+          } satisfies ChatMessage;
+        } catch {
+          return null;
+        }
+      })
+      .filter(Boolean) as ChatMessage[];
+
+    parsed.sort((a, b) => a.atMs - b.atMs);
+    return parsed;
+  }
+
+  async function appendChatMessage(roomId: string, message: ChatMessage) {
+    const key = chatKey(roomId);
+    await redis.rPush(key, JSON.stringify(message));
+    await redis.lTrim(key, -CHAT_MAX_MESSAGES, -1);
+    await redis.expire(key, CHAT_TTL_SEC);
+  }
 
   async function scheduleNextRoomAdvance(roomId: string) {
     const existing = roomAdvanceTimers.get(roomId);
@@ -252,6 +323,7 @@ async function main() {
   io.use(async (socket, next) => {
     const nowMs = Date.now();
     const ip = getClientIp(socket.handshake.headers as Record<string, string | string[] | undefined>);
+    const authPayload = isRecord(socket.handshake.auth) ? socket.handshake.auth : {};
     try {
       const rl = await consumeTokenBucket(redis, `rl:conn:${ip}`, {
         nowMs,
@@ -285,6 +357,7 @@ async function main() {
       socket.data.userId = verified.userId;
       socket.data.isAnonymous = verified.isAnonymous;
       socket.data.ip = ip;
+      socket.data.displayName = sanitizeDisplayName(authPayload.displayName) ?? undefined;
       metrics.connectionsTotal.inc({ result: "ok" });
       return next();
     } catch (e) {
@@ -355,11 +428,15 @@ async function main() {
     });
 
     socket.on("room:join", async (payload: unknown, ack?: (res: unknown) => void) => {
-      const roomId = String((payload as { roomId?: unknown } | null)?.roomId ?? "");
+      const p = isRecord(payload) ? payload : {};
+      const roomId = String(p.roomId ?? "");
       if (!isUuid(roomId)) {
         if (typeof ack === "function") ack({ ok: false, error: "invalid_room_id" });
         return;
       }
+
+      const displayName = sanitizeDisplayName(p.displayName);
+      if (displayName) socket.data.displayName = displayName;
 
       const userId = socket.data.userId;
       roomCreateUserId.set(roomId, userId);
@@ -383,14 +460,15 @@ async function main() {
           nowMs: Date.now(),
         });
         const pending = await getUpcomingPendingActions(redis, roomId, Date.now(), 5);
+        const chat = await loadChatHistory(roomId);
         void scheduleNextRoomAdvance(roomId);
         metrics.roomStateFetchDurationMs.observe(Date.now() - t0);
 
         const onlineCount = await redis.hLen(presenceKey(roomId));
         if (typeof ack === "function") {
-          ack({ ok: true, state, pending, onlineCount });
+          ack({ ok: true, state, pending, onlineCount, chat });
         } else {
-          socket.emit("room:state", { ok: true, state, pending, onlineCount });
+          socket.emit("room:state", { ok: true, state, pending, onlineCount, chat });
         }
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
@@ -415,10 +493,11 @@ async function main() {
           nowMs: Date.now(),
         });
         const pending = await getUpcomingPendingActions(redis, roomId, Date.now(), 5);
+        const chat = await loadChatHistory(roomId);
         void scheduleNextRoomAdvance(roomId);
         const onlineCount = await redis.hLen(presenceKey(roomId));
-        if (typeof ack === "function") ack({ ok: true, state, pending, onlineCount });
-        else socket.emit("room:state", { ok: true, state, pending, onlineCount });
+        if (typeof ack === "function") ack({ ok: true, state, pending, onlineCount, chat });
+        else socket.emit("room:state", { ok: true, state, pending, onlineCount, chat });
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         if (typeof ack === "function") ack({ ok: false, error: msg });
@@ -484,13 +563,6 @@ async function main() {
           nowMs: Date.now(),
         });
 
-        const controllerId = state.controllerUserId || state.createdBy;
-        const canControl = controllerId ? controllerId === userId : true;
-        if (!canControl) {
-          if (typeof ack === "function") ack({ ok: false, error: "forbidden" });
-          return;
-        }
-
         const bufferMs =
           command.type === "video:seek" || command.type === "video:set"
             ? SYNC_SEEK_BUFFER_MS
@@ -536,6 +608,63 @@ async function main() {
         log.warn({ err: e, roomId, command }, "room:command failed");
         if (typeof ack === "function") ack({ ok: false, error: msg });
       }
+    });
+
+    socket.on("chat:send", async (payload: unknown, ack?: (res: unknown) => void) => {
+      const roomId = socket.data.roomId;
+      const userId = socket.data.userId;
+      if (!roomId || !userId) {
+        if (typeof ack === "function") ack({ ok: false, error: "not_in_room" });
+        return;
+      }
+
+      try {
+        const rl = await consumeTokenBucket(redis, `rl:chat:${roomId}:${userId}`, {
+          nowMs: Date.now(),
+          capacity: envInt("RL_CHAT_CAPACITY", 10),
+          refillPerSec: envInt("RL_CHAT_REFILL_PER_SEC", 3),
+          ttlMs: 30_000,
+        });
+        if (!rl.allowed) {
+          if (typeof ack === "function") ack({ ok: false, error: "rate_limited", retryAfterMs: rl.retryAfterMs });
+          return;
+        }
+      } catch {
+        // ignore
+      }
+
+      const p = isRecord(payload) ? payload : {};
+      const messageText = sanitizeChatMessage(p.message);
+      if (!messageText) {
+        if (typeof ack === "function") ack({ ok: false, error: "invalid_message" });
+        return;
+      }
+
+      const nameFromPayload = sanitizeDisplayName(p.displayName);
+      const displayName =
+        nameFromPayload ||
+        socket.data.displayName ||
+        defaultParticipantName(userId, socket.data.isAnonymous);
+
+      if (nameFromPayload) socket.data.displayName = nameFromPayload;
+
+      const message: ChatMessage = {
+        id: createChatId(),
+        roomId,
+        userId,
+        displayName,
+        message: messageText,
+        atMs: Date.now(),
+      };
+
+      try {
+        await appendChatMessage(roomId, message);
+      } catch (e) {
+        log.warn({ err: e, roomId }, "chat append failed");
+      }
+
+      io.to(roomSocketRoom(roomId)).emit("chat:message", message);
+      if (typeof ack === "function") ack({ ok: true, message });
     });
 
     socket.on("stage:token", async (payload: unknown, ack?: (res: unknown) => void) => {
