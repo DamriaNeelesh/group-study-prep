@@ -1,4 +1,6 @@
-import "dotenv/config";
+import { config as loadDotenv } from "dotenv";
+import { existsSync } from "node:fs";
+import { resolve } from "node:path";
 
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { Server } from "socket.io";
@@ -27,6 +29,14 @@ import {
 import { isUuid } from "./util/uuid";
 import { AccessToken, RoomServiceClient } from "livekit-server-sdk";
 
+// Load repository root env first, then service-local env for unset values.
+// We intentionally avoid overriding existing vars so blank entries in service .env
+// do not wipe required values from the root .env.
+const rootEnvPath = resolve(process.cwd(), "..", "..", ".env");
+const serviceEnvPath = resolve(process.cwd(), ".env");
+if (existsSync(rootEnvPath)) loadDotenv({ path: rootEnvPath, override: false });
+if (existsSync(serviceEnvPath)) loadDotenv({ path: serviceEnvPath, override: false });
+
 type SocketData = {
   userId: string;
   isAnonymous: boolean;
@@ -42,6 +52,15 @@ type ChatMessage = {
   displayName: string;
   message: string;
   atMs: number;
+};
+
+type CallParticipant = {
+  socketId: string;
+  peerId: string;
+  userId: string;
+  displayName: string | null;
+  camOn: boolean;
+  micOn: boolean;
 };
 
 const log = pino({
@@ -211,10 +230,33 @@ async function main() {
 
   const roomAdvanceTimers = new Map<string, NodeJS.Timeout>();
   const roomCreateUserId = new Map<string, string>();
+  const callRooms = new Map<string, Map<string, CallParticipant>>();
+  const callMembershipBySocketId = new Map<string, { roomId: string; peerId: string }>();
+  const allowedCallSignalEvents = new Set([
+    "webrtc:offer",
+    "webrtc:answer",
+    "webrtc:candidate",
+    "webrtc:renegotiate",
+  ]);
 
   const pendingKey = (roomId: string) => `room:pending:${roomId}`;
   const lockKey = (roomId: string) => `lock:roomAdvance:${roomId}`;
   const chatKey = (roomId: string) => `room:chat:${roomId}`;
+
+  function emitCallPresence(roomId: string) {
+    const room = callRooms.get(roomId);
+    const participants = room
+      ? Array.from(room.values()).map((p) => ({
+          peerId: p.peerId,
+          userId: p.userId,
+          displayName: p.displayName,
+          camOn: p.camOn,
+          micOn: p.micOn,
+          connections: 1,
+        }))
+      : [];
+    io.to(roomSocketRoom(roomId)).emit("call:presence", { roomId, participants });
+  }
 
   async function loadChatHistory(roomId: string): Promise<ChatMessage[]> {
     const items = await redis.lRange(chatKey(roomId), -CHAT_MAX_MESSAGES, -1);
@@ -410,8 +452,23 @@ async function main() {
   io.on("connection", (socket) => {
     metrics.socketsConnected.set(io.engine.clientsCount);
 
+    function leaveCallRoom() {
+      const membership = callMembershipBySocketId.get(socket.id);
+      if (!membership) return;
+      callMembershipBySocketId.delete(socket.id);
+
+      const room = callRooms.get(membership.roomId);
+      if (!room) return;
+
+      room.delete(membership.peerId);
+      if (room.size === 0) callRooms.delete(membership.roomId);
+
+      emitCallPresence(membership.roomId);
+    }
+
     socket.on("disconnect", () => {
       metrics.socketsConnected.set(io.engine.clientsCount);
+      leaveCallRoom();
       const roomId = socket.data.roomId;
       const userId = socket.data.userId;
       if (roomId && userId) void decrementPresence(roomId, userId);
@@ -665,6 +722,117 @@ async function main() {
 
       io.to(roomSocketRoom(roomId)).emit("chat:message", message);
       if (typeof ack === "function") ack({ ok: true, message });
+    });
+
+    socket.on("call:join", (payload: unknown, ack?: (res: unknown) => void) => {
+      const p = isRecord(payload) ? payload : {};
+      const roomId = String(p.roomId ?? "");
+      const peerId = sanitizeIdPart(p.peerId);
+      if (!isUuid(roomId) || !peerId) {
+        if (typeof ack === "function") ack({ ok: false, error: "invalid_call_join" });
+        return;
+      }
+
+      // Ensure one active call membership per socket.
+      const prev = callMembershipBySocketId.get(socket.id);
+      if (prev && (prev.roomId !== roomId || prev.peerId !== peerId)) {
+        leaveCallRoom();
+      }
+
+      const displayName =
+        sanitizeDisplayName(p.displayName) ??
+        socket.data.displayName ??
+        defaultParticipantName(socket.data.userId, socket.data.isAnonymous);
+
+      const camOn = Boolean(p.camOn);
+      const micOn = Boolean(p.micOn);
+
+      let room = callRooms.get(roomId);
+      if (!room) {
+        room = new Map<string, CallParticipant>();
+        callRooms.set(roomId, room);
+      }
+
+      room.set(peerId, {
+        socketId: socket.id,
+        peerId,
+        userId: socket.data.userId,
+        displayName,
+        camOn,
+        micOn,
+      });
+      callMembershipBySocketId.set(socket.id, { roomId, peerId });
+      socket.join(roomSocketRoom(roomId));
+
+      emitCallPresence(roomId);
+      if (typeof ack === "function") ack({ ok: true });
+    });
+
+    socket.on("call:leave", (_payload: unknown, ack?: (res: unknown) => void) => {
+      leaveCallRoom();
+      if (typeof ack === "function") ack({ ok: true });
+    });
+
+    socket.on("call:presence:update", (payload: unknown, ack?: (res: unknown) => void) => {
+      const membership = callMembershipBySocketId.get(socket.id);
+      if (!membership) {
+        if (typeof ack === "function") ack({ ok: false, error: "not_in_call" });
+        return;
+      }
+
+      const room = callRooms.get(membership.roomId);
+      const current = room?.get(membership.peerId);
+      if (!room || !current) {
+        if (typeof ack === "function") ack({ ok: false, error: "not_in_call" });
+        return;
+      }
+
+      const p = isRecord(payload) ? payload : {};
+      const nextDisplay = sanitizeDisplayName(p.displayName);
+      if (nextDisplay) current.displayName = nextDisplay;
+      if ("camOn" in p) current.camOn = Boolean(p.camOn);
+      if ("micOn" in p) current.micOn = Boolean(p.micOn);
+      room.set(membership.peerId, current);
+
+      emitCallPresence(membership.roomId);
+      if (typeof ack === "function") ack({ ok: true });
+    });
+
+    socket.on("call:signal", (payload: unknown, ack?: (res: unknown) => void) => {
+      const membership = callMembershipBySocketId.get(socket.id);
+      if (!membership) {
+        if (typeof ack === "function") ack({ ok: false, error: "not_in_call" });
+        return;
+      }
+
+      const p = isRecord(payload) ? payload : {};
+      const event = String(p.event ?? "");
+      const signalPayload = isRecord(p.payload) ? p.payload : {};
+      const toPeerId = sanitizeIdPart(signalPayload.toPeerId);
+
+      if (!allowedCallSignalEvents.has(event) || !toPeerId) {
+        if (typeof ack === "function") ack({ ok: false, error: "invalid_signal" });
+        return;
+      }
+
+      const room = callRooms.get(membership.roomId);
+      const target = room?.get(toPeerId);
+      if (!room || !target) {
+        if (typeof ack === "function") ack({ ok: false, error: "peer_not_found" });
+        return;
+      }
+
+      io.to(target.socketId).emit("call:signal", {
+        event,
+        payload: {
+          ...signalPayload,
+          roomId: membership.roomId,
+          fromPeerId: membership.peerId,
+          fromUserId: socket.data.userId,
+          toPeerId,
+        },
+      });
+      if (typeof ack === "function") ack({ ok: true });
     });
 
     socket.on("stage:token", async (payload: unknown, ack?: (res: unknown) => void) => {

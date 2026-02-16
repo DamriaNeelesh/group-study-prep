@@ -81,33 +81,31 @@ export default function RoomPage() {
       />
 
       <main className="nt-container pb-12 pt-8">
-        <header className="nt-card relative overflow-hidden p-6">
+        <header className="nt-card relative overflow-hidden p-6 md:p-7">
           <div className="pointer-events-none absolute inset-0 opacity-60">
             <div className="absolute -left-24 -top-24 h-64 w-64 rounded-full bg-[var(--accent)]/20 blur-3xl" />
-            <div className="absolute -right-24 -top-24 h-64 w-64 rounded-full bg-black/10 blur-3xl" />
+            <div className="absolute -right-24 -top-24 h-64 w-64 rounded-full bg-[#8a8aa3]/15 blur-3xl" />
           </div>
 
           <div className="relative flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
-                <span className="rounded-full bg-[var(--surface-2)] px-3 py-1 text-xs font-extrabold text-[var(--foreground)]">
-                  Room
-                </span>
-                <span className="rounded-full bg-[var(--accent-soft)] px-3 py-1 text-xs font-extrabold text-[var(--accent-2)]">
+                <span className="nt-chip">Room</span>
+                <span className="rounded-full bg-[var(--accent-soft)] px-3 py-1 text-xs font-semibold text-[var(--accent-2)]">
                   Online: <span className="font-mono">{onlineCount}</span>
                 </span>
-                <span className="rounded-full bg-black/5 px-3 py-1 text-xs font-extrabold text-[var(--foreground)]">
+                <span className="nt-chip">
                   {useSocket ? "Sync v2 (Socket)" : "Sync v1 (Supabase)"}
                 </span>
                 {useSocket ? (
-                  <span className="rounded-full bg-black/5 px-3 py-1 text-xs font-extrabold text-[var(--foreground)]">
+                  <span className="nt-chip">
                     {roomSocket.connection}
                   </span>
                 ) : null}
               </div>
 
               <div className="mt-3 flex flex-wrap items-center gap-2">
-                <div className="rounded-[12px] border border-black/5 bg-white px-3 py-2 text-sm font-extrabold text-[var(--foreground)]">
+                <div className="rounded-[14px] border border-black/10 bg-white/85 px-3 py-2 text-sm font-semibold text-[var(--foreground)]">
                   <span className="font-mono break-all">{rawId}</span>
                 </div>
                 <button
@@ -212,7 +210,7 @@ export default function RoomPage() {
         ) : null}
 
         {roomError ? (
-          <section className="rounded-[12px] border border-red-200 bg-red-50 p-5 text-sm font-semibold text-red-800">
+          <section className="rounded-[14px] border border-red-200 bg-red-50 p-5 text-sm font-semibold text-red-800">
             {roomError}
           </section>
         ) : null}
@@ -250,7 +248,7 @@ export default function RoomPage() {
                 </div>
 
                 {useSocket ? (
-                  <div className="flex flex-wrap items-center gap-2 rounded-[12px] border border-black/10 bg-[var(--surface-2)] p-3">
+                  <div className="flex flex-wrap items-center gap-2 rounded-[14px] border border-black/10 bg-[var(--surface-2)] p-3">
                     <button
                       className="nt-btn nt-btn-primary h-10 px-4"
                       onClick={() => void roomSocket.play()}
@@ -344,7 +342,7 @@ export default function RoomPage() {
 
             {useSocket ? (
               <details className="nt-card p-4">
-                <summary className="cursor-pointer text-sm font-extrabold text-[var(--foreground)]">
+                <summary className="cursor-pointer text-sm font-semibold text-[var(--foreground)]">
                   Advanced LiveKit Rooms
                 </summary>
                 <div className="mt-4 flex flex-col gap-6">
@@ -377,7 +375,7 @@ export default function RoomPage() {
             )}
 
             <div className="nt-card p-4">
-              <div className="text-sm font-extrabold text-[var(--foreground)]">Presence</div>
+              <div className="text-sm font-semibold text-[var(--foreground)]">Presence</div>
               <div className="mt-2 flex flex-col gap-2">
                 {useSocket ? (
                   <div className="rounded-[12px] border border-black/10 bg-white p-3">

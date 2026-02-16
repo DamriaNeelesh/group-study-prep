@@ -1,10 +1,8 @@
 "use client";
 
-import type {
-  RealtimeChannel,
-  RealtimePresenceState,
-} from "@supabase/supabase-js";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { io, type Socket } from "socket.io-client";
+import msgpackParser from "socket.io-msgpack-parser";
 
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 
@@ -50,7 +48,6 @@ type Peer = {
 type State = {
   isReady: boolean;
   error: string | null;
-  channel: RealtimeChannel | null;
   participants: CallParticipant[];
   camOn: boolean;
   micOn: boolean;
@@ -78,27 +75,6 @@ function iceServersFromEnv(): RTCIceServer[] {
   return DEFAULT_ICE_SERVERS;
 }
 
-function participantsFromState(state: RealtimePresenceState<CallPresenceMeta>) {
-  const users: CallParticipant[] = [];
-  for (const [key, metas] of Object.entries(state)) {
-    const meta = metas[0];
-    users.push({
-      peerId: meta?.peerId ?? key,
-      userId: meta?.userId ?? "",
-      displayName: meta?.displayName ?? null,
-      camOn: Boolean(meta?.camOn),
-      micOn: Boolean(meta?.micOn),
-      connections: metas.length,
-    });
-  }
-  users.sort((a, b) => {
-    const ak = (a.displayName || a.userId || a.peerId).toLowerCase();
-    const bk = (b.displayName || b.userId || b.peerId).toLowerCase();
-    return ak.localeCompare(bk);
-  });
-  return users;
-}
-
 function isOfferInitiator(localId: string, remoteId: string) {
   // Deterministic initiator to avoid offer glare without implementing "perfect negotiation".
   return localId.localeCompare(remoteId) < 0;
@@ -119,6 +95,10 @@ function createPeerId() {
   } catch {
     return `peer_${Date.now().toString(16)}_${Math.random().toString(16).slice(2)}`;
   }
+}
+
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return Boolean(v) && typeof v === "object" && !Array.isArray(v);
 }
 
 function formatGetUserMediaError(kind: "camera" | "microphone", e: unknown) {
@@ -151,14 +131,16 @@ export function useRoomCall(args: {
   displayName: string;
 }) {
   const supabase = useMemo(() => getSupabaseBrowserClient(), []);
+  const realtimeUrl = (process.env.NEXT_PUBLIC_REALTIME_URL || "").trim();
   const missingEnvError = supabase
-    ? null
+    ? realtimeUrl
+      ? null
+      : "Missing env: NEXT_PUBLIC_REALTIME_URL"
     : "Missing env: NEXT_PUBLIC_SUPABASE_URL and/or NEXT_PUBLIC_SUPABASE_ANON_KEY";
 
   const [state, setState] = useState<State>({
     isReady: false,
     error: missingEnvError,
-    channel: null,
     participants: [],
     camOn: false,
     micOn: false,
@@ -168,7 +150,7 @@ export function useRoomCall(args: {
   });
 
   const localPeerIdRef = useRef<string>(createPeerId());
-  const channelRef = useRef<RealtimeChannel | null>(null);
+  const socketRef = useRef<Socket | null>(null);
   const peersRef = useRef<Map<string, Peer>>(new Map());
   const localStreamRef = useRef<MediaStream | null>(null);
   const presenceMetaRef = useRef<CallPresenceMeta | null>(null);
@@ -237,18 +219,44 @@ export function useRoomCall(args: {
   }, [getOrCreateDummyVideoTrack]);
 
   const send = useCallback(async (event: string, payload: Record<string, unknown>) => {
-    const channel = channelRef.current;
-    if (!channel) return;
-    await channel.send({ type: "broadcast", event, payload });
+    const socket = socketRef.current;
+    if (!socket || !socket.connected) return;
+    await new Promise<void>((resolve) => {
+      let done = false;
+      const finish = () => {
+        if (done) return;
+        done = true;
+        window.clearTimeout(id);
+        socket.off("disconnect", onDisconnect);
+        resolve();
+      };
+      const onDisconnect = () => finish();
+      const id = window.setTimeout(finish, 1500);
+      socket.on("disconnect", onDisconnect);
+      socket.emit("call:signal", { event, payload }, () => finish());
+    });
   }, []);
 
   const updatePresenceMeta = useCallback(async (patch: Partial<CallPresenceMeta>) => {
-    const channel = channelRef.current;
+    const socket = socketRef.current;
     const meta = presenceMetaRef.current;
-    if (!channel || !meta) return;
+    if (!socket || !socket.connected || !meta) return;
     const next = { ...meta, ...patch };
     presenceMetaRef.current = next;
-    await channel.track(next);
+    await new Promise<void>((resolve) => {
+      let done = false;
+      const finish = () => {
+        if (done) return;
+        done = true;
+        window.clearTimeout(id);
+        socket.off("disconnect", onDisconnect);
+        resolve();
+      };
+      const onDisconnect = () => finish();
+      const id = window.setTimeout(finish, 1500);
+      socket.on("disconnect", onDisconnect);
+      socket.emit("call:presence:update", next, () => finish());
+    });
   }, []);
 
   const requestRenegotiate = useCallback(
@@ -654,6 +662,7 @@ export function useRoomCall(args: {
 
   useEffect(() => {
     if (!supabase) return;
+    if (!realtimeUrl) return;
     const roomId = args.roomId;
     const userId = args.userId;
     if (!roomId || !userId) return;
@@ -662,13 +671,30 @@ export function useRoomCall(args: {
     let ignore = false;
     const peers = peersRef.current;
 
-    const channel = supabase.channel(`call:${roomId}`, {
-      config: {
-        broadcast: { self: false },
-        presence: { key: localPeerId },
-      },
+    const socket = io(realtimeUrl, {
+      autoConnect: false,
+      transports: ["websocket"],
+      reconnection: false,
+      parser: msgpackParser,
+      auth: { token: "", displayName: args.displayName },
     });
-    channelRef.current = channel;
+    socketRef.current = socket;
+    let reconnectTimer: number | null = null;
+
+    const clearReconnectTimer = () => {
+      if (reconnectTimer != null) {
+        window.clearTimeout(reconnectTimer);
+        reconnectTimer = null;
+      }
+    };
+
+    const scheduleReconnect = (delayMs: number) => {
+      if (ignore) return;
+      clearReconnectTimer();
+      reconnectTimer = window.setTimeout(() => {
+        void connectWithFreshToken();
+      }, Math.max(250, delayMs));
+    };
 
     presenceMetaRef.current = {
       peerId: localPeerId,
@@ -678,34 +704,16 @@ export function useRoomCall(args: {
       micOn: false,
     };
 
-    channel
-      .on("presence", { event: "sync" }, () => {
-        const p = participantsFromState(
-          channel.presenceState() as RealtimePresenceState<CallPresenceMeta>,
-        );
-        setState((s) => ({ ...s, participants: p }));
-      })
-      .on("presence", { event: "join" }, () => {
-        const p = participantsFromState(
-          channel.presenceState() as RealtimePresenceState<CallPresenceMeta>,
-        );
-        setState((s) => ({ ...s, participants: p }));
-      })
-      .on("presence", { event: "leave" }, () => {
-        const p = participantsFromState(
-          channel.presenceState() as RealtimePresenceState<CallPresenceMeta>,
-        );
-        setState((s) => ({ ...s, participants: p }));
-      })
-      .on("broadcast", { event: "webrtc:offer" }, async ({ payload }) => {
-        if (ignore) return;
-        const toPeerId = String(payload?.toPeerId ?? "");
-        if (toPeerId !== localPeerId) return;
-        const fromPeerId = String(payload?.fromPeerId ?? "");
-        if (!fromPeerId) return;
-        const sdp = payload?.sdp as RTCSessionDescriptionInit | undefined;
-        if (!sdp?.type || !sdp?.sdp) return;
+    const handleSignal = async (event: string, payload: unknown) => {
+      if (ignore || !isRecord(payload)) return;
+      const toPeerId = String(payload.toPeerId ?? "");
+      if (toPeerId !== localPeerId) return;
+      const fromPeerId = String(payload.fromPeerId ?? "");
+      if (!fromPeerId) return;
 
+      if (event === "webrtc:offer") {
+        const sdp = payload.sdp as RTCSessionDescriptionInit | undefined;
+        if (!sdp?.type || !sdp?.sdp) return;
         const peer = await ensurePeer(fromPeerId);
         if (!peer) return;
         try {
@@ -730,16 +738,12 @@ export function useRoomCall(args: {
             error: e instanceof Error ? e.message : String(e),
           }));
         }
-      })
-      .on("broadcast", { event: "webrtc:answer" }, async ({ payload }) => {
-        if (ignore) return;
-        const toPeerId = String(payload?.toPeerId ?? "");
-        if (toPeerId !== localPeerId) return;
-        const fromPeerId = String(payload?.fromPeerId ?? "");
-        if (!fromPeerId) return;
-        const sdp = payload?.sdp as RTCSessionDescriptionInit | undefined;
-        if (!sdp?.type || !sdp?.sdp) return;
+        return;
+      }
 
+      if (event === "webrtc:answer") {
+        const sdp = payload.sdp as RTCSessionDescriptionInit | undefined;
+        if (!sdp?.type || !sdp?.sdp) return;
         const peer = await ensurePeer(fromPeerId);
         if (!peer) return;
         try {
@@ -752,16 +756,12 @@ export function useRoomCall(args: {
             error: e instanceof Error ? e.message : String(e),
           }));
         }
-      })
-      .on("broadcast", { event: "webrtc:candidate" }, async ({ payload }) => {
-        if (ignore) return;
-        const toPeerId = String(payload?.toPeerId ?? "");
-        if (toPeerId !== localPeerId) return;
-        const fromPeerId = String(payload?.fromPeerId ?? "");
-        if (!fromPeerId) return;
-        const candidate = payload?.candidate as RTCIceCandidateInit | undefined;
-        if (!candidate?.candidate) return;
+        return;
+      }
 
+      if (event === "webrtc:candidate") {
+        const candidate = payload.candidate as RTCIceCandidateInit | undefined;
+        if (!candidate?.candidate) return;
         const peer = await ensurePeer(fromPeerId);
         if (!peer) return;
 
@@ -774,52 +774,150 @@ export function useRoomCall(args: {
         } catch {
           // ignore
         }
-      })
-      .on("broadcast", { event: "webrtc:renegotiate" }, async ({ payload }) => {
-        if (ignore) return;
-        const toPeerId = String(payload?.toPeerId ?? "");
-        if (toPeerId !== localPeerId) return;
-        const fromPeerId = String(payload?.fromPeerId ?? "");
-        if (!fromPeerId) return;
-
-        // Only the deterministic initiator should send offers.
-        if (!isOfferInitiator(localPeerId, fromPeerId)) return;
-        startOfferRef.current(fromPeerId);
-      });
-
-    channel.subscribe(async (status, err) => {
-      if (status === "CHANNEL_ERROR") {
-        console.error("[Realtime] Channel error:", err);
-        setState((s) => ({
-          ...s,
-          error: "Connection failed. Please check your internet or refresh.",
-        }));
         return;
       }
 
-      setState((s) => ({ ...s, channel, isReady: false, error: null }));
-      if (status !== "SUBSCRIBED") return;
+      if (event === "webrtc:renegotiate") {
+        if (!isOfferInitiator(localPeerId, fromPeerId)) return;
+        startOfferRef.current(fromPeerId);
+      }
+    };
+
+    const connectWithFreshToken = async () => {
+      if (ignore) return;
+      if (socket.connected) return;
+      try {
+        const { data } = await supabase.auth.getSession();
+        const token = data.session?.access_token ?? "";
+        if (!token) {
+          scheduleReconnect(1000);
+          return;
+        }
+        socket.auth = { token, displayName: args.displayName };
+      } catch {
+        scheduleReconnect(1000);
+        return;
+      }
+
+      try {
+        socket.connect();
+      } catch {
+        scheduleReconnect(1000);
+      }
+    };
+
+    socket.on("call:presence", (payload: unknown) => {
+      if (!isRecord(payload)) return;
+      if (String(payload.roomId ?? "") !== roomId) return;
+      const list = Array.isArray(payload.participants) ? payload.participants : [];
+      const participants = list
+        .map((raw) => {
+          if (!isRecord(raw)) return null;
+          const peerId = typeof raw.peerId === "string" ? raw.peerId : "";
+          const uid = typeof raw.userId === "string" ? raw.userId : "";
+          if (!peerId || !uid) return null;
+          return {
+            peerId,
+            userId: uid,
+            displayName:
+              typeof raw.displayName === "string" ? raw.displayName : null,
+            camOn: Boolean(raw.camOn),
+            micOn: Boolean(raw.micOn),
+            connections:
+              typeof raw.connections === "number"
+                ? Math.max(1, Math.trunc(raw.connections))
+                : 1,
+          } satisfies CallParticipant;
+        })
+        .filter(Boolean) as CallParticipant[];
+
+      participants.sort((a, b) => {
+        const ak = (a.displayName || a.userId || a.peerId).toLowerCase();
+        const bk = (b.displayName || b.userId || b.peerId).toLowerCase();
+        return ak.localeCompare(bk);
+      });
+
+      setState((s) => ({ ...s, participants }));
+    });
+
+    socket.on("call:signal", (msg: unknown) => {
+      if (!isRecord(msg)) return;
+      const event = typeof msg.event === "string" ? msg.event : "";
+      if (!event) return;
+      void handleSignal(event, msg.payload);
+    });
+
+    socket.on("connect", () => {
+      if (ignore) return;
+      setState((s) => ({ ...s, isReady: false, error: null }));
 
       // Ensure we have a local stream with at least a dummy video track
-      // BEFORE we track presence. This prevents peer connections from
-      // being created without any tracks to send.
+      // BEFORE joining call presence so peers can negotiate immediately.
       ensureLocalStream();
 
-      setState((s) => ({ ...s, isReady: true }));
       const meta = presenceMetaRef.current;
-      if (meta) {
-        try {
-          await channel.track(meta);
-        } catch {
-          // ignore
-        }
-      }
+      socket.emit(
+        "call:join",
+        {
+          roomId,
+          peerId: localPeerId,
+          displayName: meta?.displayName ?? args.displayName ?? null,
+          camOn: Boolean(meta?.camOn),
+          micOn: Boolean(meta?.micOn),
+        },
+        (res: unknown) => {
+          if (ignore) return;
+          if (isRecord(res) && res.ok === true) {
+            setState((s) => ({ ...s, isReady: true, error: null }));
+            return;
+          }
+          const err =
+            isRecord(res) && typeof res.error === "string"
+              ? res.error
+              : "call_join_failed";
+          setState((s) => ({ ...s, isReady: false, error: err }));
+        },
+      );
     });
+
+    socket.on("disconnect", () => {
+      if (ignore) return;
+      setState((s) => ({
+        ...s,
+        isReady: false,
+        error: s.error ?? "Meet disconnected. Reconnecting...",
+      }));
+      scheduleReconnect(1000);
+    });
+
+    socket.on("connect_error", (err: unknown) => {
+      if (ignore) return;
+      const msg =
+        isRecord(err) && typeof err.message === "string"
+          ? err.message
+          : "meet_connect_failed";
+      setState((s) => ({ ...s, isReady: false, error: msg }));
+      scheduleReconnect(1500);
+    });
+
+    void connectWithFreshToken();
 
     return () => {
       ignore = true;
+      clearReconnectTimer();
       presenceMetaRef.current = null;
-      channelRef.current = null;
+
+      try {
+        socket.emit("call:leave", {});
+      } catch {
+        // ignore
+      }
+      try {
+        socket.disconnect();
+      } catch {
+        // ignore
+      }
+      socketRef.current = null;
 
       for (const k of Array.from(peers.keys())) closePeer(k);
       const ls = localStreamRef.current;
@@ -846,7 +944,6 @@ export function useRoomCall(args: {
 
       setState((s) => ({
         ...s,
-        channel: null,
         isReady: false,
         participants: [],
         camOn: false,
@@ -855,7 +952,6 @@ export function useRoomCall(args: {
         remoteStreams: [],
         debugPeers: [],
       }));
-      void supabase.removeChannel(channel);
     };
   }, [
     args.displayName,
@@ -865,6 +961,7 @@ export function useRoomCall(args: {
     ensurePeer,
     ensureLocalStream,
     flushPendingCandidates,
+    realtimeUrl,
     send,
     supabase,
   ]);

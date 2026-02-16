@@ -89,7 +89,7 @@ function Tile(props: { participant: Participant; isLocal: boolean }) {
 
   return (
     <div
-      className="relative overflow-hidden rounded-[12px] border border-black/10 bg-black shadow-[0_1px_14px_rgba(0,0,0,0.10)]"
+      className="relative overflow-hidden rounded-[16px] border border-black/10 bg-[linear-gradient(180deg,#141821,#0d1117)] shadow-[0_18px_34px_rgba(15,23,42,0.22)]"
       onClick={() => {
         const v = videoRef.current;
         const a = audioRef.current;
@@ -115,21 +115,21 @@ function Tile(props: { participant: Participant; isLocal: boolean }) {
       <audio ref={audioRef} autoPlay />
 
       <div className="absolute inset-x-0 bottom-0 flex items-center justify-between gap-2 p-2">
-        <div className="min-w-0 rounded-full bg-black/60 px-2 py-1 text-xs font-bold text-white">
+        <div className="min-w-0 rounded-full border border-white/20 bg-black/45 px-2 py-1 text-xs font-semibold text-white">
           <span className="truncate">
             {label}
             {props.isLocal ? " (You)" : ""}
           </span>
         </div>
-        <div className="flex items-center gap-2 text-[11px] font-extrabold text-white/90">
-          <span className="rounded-full bg-black/60 px-2 py-1">{micOn ? "Mic" : "Mic Off"}</span>
-          <span className="rounded-full bg-black/60 px-2 py-1">{camOn ? "Cam" : "Cam Off"}</span>
+        <div className="flex items-center gap-2 text-[11px] font-semibold text-white/92">
+          <span className="rounded-full border border-white/20 bg-black/45 px-2 py-1">{micOn ? "Mic" : "Mic Off"}</span>
+          <span className="rounded-full border border-white/20 bg-black/45 px-2 py-1">{camOn ? "Cam" : "Cam Off"}</span>
         </div>
       </div>
 
       {playError ? (
         <div className="absolute inset-x-0 top-0 p-2">
-          <div className="rounded-[10px] border border-white/15 bg-black/70 px-2 py-1 text-[11px] font-semibold text-white/80">
+          <div className="rounded-[10px] border border-white/20 bg-black/55 px-2 py-1 text-[11px] font-semibold text-white/82">
             Tap to enable media playback
           </div>
         </div>

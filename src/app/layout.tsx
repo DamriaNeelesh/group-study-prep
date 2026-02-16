@@ -1,17 +1,5 @@
 import type { Metadata } from "next";
-import { JetBrains_Mono, Reddit_Sans } from "next/font/google";
 import "./globals.css";
-
-const redditSans = Reddit_Sans({
-  variable: "--font-nt-sans",
-  subsets: ["latin"],
-  weight: ["200", "300", "400", "500", "600", "700", "800", "900"],
-});
-
-const jetbrainsMono = JetBrains_Mono({
-  variable: "--font-nt-mono",
-  subsets: ["latin"],
-});
 
 export const metadata: Metadata = {
   title: "StudyRoom",
@@ -25,10 +13,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" suppressHydrationWarning>
-      <body
-        suppressHydrationWarning
-        className={`${redditSans.variable} ${jetbrainsMono.variable} antialiased`}
-      >
+      <body suppressHydrationWarning className="antialiased">
         <div className="nt-page">{children}</div>
       </body>
     </html>

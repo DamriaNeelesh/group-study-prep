@@ -4,39 +4,17 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useMemo, useState } from "react";
 
-import {
-  extractRoomIdFromInput,
-  looksLikeShortRoomCode,
-} from "@/lib/roomId";
+import { extractRoomIdFromInput, looksLikeShortRoomCode } from "@/lib/roomId";
 
 function LogoMark() {
   return (
-    <div className="flex items-center gap-2">
-      <div className="rounded-lg bg-[var(--primary)] px-3 py-2 text-sm font-extrabold tracking-tight text-white shadow-[0_10px_30px_rgba(0,0,0,0.14)]">
-        Study<span className="text-[var(--accent)]">Room</span>
+    <div className="flex items-center gap-3">
+      <div className="flex h-8 w-8 items-center justify-center rounded-full bg-[linear-gradient(180deg,#4ea0ff,#0071e3)] text-[11px] font-bold text-white shadow-[0_8px_18px_rgba(0,113,227,0.35)]">
+        SR
       </div>
-      <svg
-        width="22"
-        height="22"
-        viewBox="0 0 24 24"
-        fill="none"
-        xmlns="http://www.w3.org/2000/svg"
-        aria-hidden="true"
-      >
-        <path
-          d="M3 12h12"
-          stroke="var(--accent)"
-          strokeWidth="2.5"
-          strokeLinecap="round"
-        />
-        <path
-          d="M12 5l7 7-7 7"
-          stroke="var(--accent)"
-          strokeWidth="2.5"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
-      </svg>
+      <div className="text-[15px] font-semibold tracking-[-0.02em] text-[var(--foreground)]">
+        StudyRoom
+      </div>
     </div>
   );
 }
@@ -68,7 +46,7 @@ export function SiteHeader(props: {
 
     setJoinError(
       looksLikeShortRoomCode(input)
-        ? "That looks like a short code (first 8 chars). Please paste the full Room ID (UUID) or the full room link."
+        ? "That looks like a short code (first 8 chars). Paste the full Room ID or room link."
         : "Paste a full room link or UUID.",
     );
   }, [q, router]);
@@ -85,7 +63,7 @@ export function SiteHeader(props: {
 
   const rightCtaLabel = useMemo(() => {
     if (!props.userId) return "Continue with Google";
-    if (props.isGuest) return "Continue with Google";
+    if (props.isGuest) return "Upgrade with Google";
     return "Sign out";
   }, [props.isGuest, props.userId]);
 
@@ -98,18 +76,18 @@ export function SiteHeader(props: {
           </Link>
 
           <form
-            className="hidden flex-1 items-center gap-0 md:flex"
+            className="hidden min-w-0 flex-1 items-center gap-3 lg:flex"
             onSubmit={(e) => {
               e.preventDefault();
               if (!canGo) return;
               handleJoin();
             }}
           >
-            <div className="flex w-full max-w-[560px] items-center overflow-hidden rounded-[10px] bg-[var(--surface-2)]">
-              <div className="px-3 text-[var(--muted)]">
+            <div className="flex w-full max-w-[560px] items-center overflow-hidden rounded-full border border-black/10 bg-white/85 shadow-[inset_0_1px_0_rgba(255,255,255,0.75)]">
+              <div className="pl-4 text-[var(--muted)]">
                 <svg
-                  width="18"
-                  height="18"
+                  width="16"
+                  height="16"
                   viewBox="0 0 24 24"
                   fill="none"
                   xmlns="http://www.w3.org/2000/svg"
@@ -129,65 +107,44 @@ export function SiteHeader(props: {
                 </svg>
               </div>
               <input
-                className="h-10 w-full bg-transparent px-2 text-sm font-medium text-[var(--foreground)] outline-none"
+                className="h-11 w-full bg-transparent px-3 text-sm font-medium text-[var(--foreground)] outline-none placeholder:text-[var(--muted)]"
                 value={q}
                 onChange={(e) => {
                   setQ(e.target.value);
                   if (joinError) setJoinError(null);
                 }}
-                placeholder="Paste room link or UUID..."
+                placeholder="Paste room link or UUID"
               />
               <button
                 type="submit"
-                className="h-10 px-4 text-sm font-bold text-white"
-                style={{ background: "var(--primary)" }}
+                className="nt-btn nt-btn-accent mr-1.5 h-8 px-4 text-xs"
                 disabled={!canGo}
               >
                 Join
               </button>
             </div>
-            {joinError ? (
-              <div className="ml-3 text-xs font-semibold text-red-700">
-                {joinError}
-              </div>
-            ) : null}
+            {joinError ? <div className="text-xs font-semibold text-red-700">{joinError}</div> : null}
           </form>
 
-          <div className="ml-auto flex items-center gap-4">
-            <nav className="hidden items-center gap-5 text-sm font-semibold text-[var(--foreground)] md:flex">
-              <Link className="hover:underline" href="/">
-                Home
-              </Link>
-              <a
-                className="hover:underline"
-                href="https://supabase.com/docs"
-                target="_blank"
-                rel="noreferrer"
-              >
-                Docs
-              </a>
-            </nav>
-
+          <div className="ml-auto flex items-center gap-2 sm:gap-3">
             {props.userId ? (
               <>
                 <button
                   type="button"
-                  className="hidden rounded-full bg-white px-3 py-1 text-xs font-semibold text-[var(--foreground)] shadow-[0_1px_10px_rgba(0,0,0,0.06)] sm:inline"
-                  title="Click to copy full Guest ID"
+                  className="hidden rounded-full border border-black/10 bg-white/80 px-3 py-1 text-xs font-semibold text-[var(--foreground)] shadow-[0_6px_14px_rgba(17,24,39,0.08)] sm:inline"
+                  title="Copy full user ID"
                   onClick={() => void copyUserId()}
                 >
                   <span className="font-mono">
                     {props.userId.slice(0, 8)}...{props.userId.slice(-4)}
                   </span>
-                  {props.isGuest ? (
-                    <span className="ml-2 nt-badge">Guest</span>
-                  ) : null}
+                  {props.isGuest ? <span className="ml-2 nt-badge">Guest</span> : null}
                 </button>
 
                 <button
                   type="button"
                   className="nt-btn nt-btn-outline h-10 w-10 p-0 sm:hidden"
-                  title="Copy full Guest ID"
+                  title="Copy full user ID"
                   onClick={() => void copyUserId()}
                 >
                   <svg
@@ -216,7 +173,7 @@ export function SiteHeader(props: {
             ) : null}
 
             <button
-              className="nt-btn nt-btn-primary"
+              className="nt-btn nt-btn-primary h-10"
               onClick={() => {
                 if (!props.userId) {
                   props.onGoogle();
@@ -232,8 +189,8 @@ export function SiteHeader(props: {
         </div>
       </div>
 
-      <div className="md:hidden">
-        <div className="nt-container pb-3">
+      <div className="border-b border-black/5 bg-white/55 px-0 py-2.5 backdrop-blur lg:hidden">
+        <div className="nt-container">
           <form
             className="flex items-center gap-2"
             onSubmit={(e) => {
@@ -243,27 +200,19 @@ export function SiteHeader(props: {
             }}
           >
             <input
-              className="h-11 w-full rounded-[10px] bg-[var(--surface-2)] px-4 text-sm font-semibold text-[var(--foreground)] outline-none placeholder:text-[var(--muted)]"
+              className="h-11 w-full rounded-full border border-black/10 bg-white/90 px-4 text-sm font-medium text-[var(--foreground)] outline-none placeholder:text-[var(--muted)]"
               value={q}
               onChange={(e) => {
                 setQ(e.target.value);
                 if (joinError) setJoinError(null);
               }}
-              placeholder="Paste room link or UUID..."
+              placeholder="Paste room link or UUID"
             />
-            <button
-              type="submit"
-              className="nt-btn nt-btn-primary h-11 px-4"
-              disabled={!canGo}
-            >
+            <button type="submit" className="nt-btn nt-btn-accent h-11 px-4" disabled={!canGo}>
               Join
             </button>
           </form>
-          {joinError ? (
-            <div className="mt-2 text-xs font-semibold text-red-700">
-              {joinError}
-            </div>
-          ) : null}
+          {joinError ? <div className="mt-2 text-xs font-semibold text-red-700">{joinError}</div> : null}
         </div>
       </div>
     </div>
