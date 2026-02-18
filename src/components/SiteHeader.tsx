@@ -129,6 +129,14 @@ export function SiteHeader(props: {
           <div className="ml-auto flex items-center gap-2 sm:gap-3">
             {props.userId ? (
               <>
+                <Link
+                  href="/api-keys"
+                  className="hidden nt-btn nt-btn-outline h-10 px-4 sm:inline-flex"
+                  title="Manage API keys"
+                >
+                  API Keys
+                </Link>
+
                 <button
                   type="button"
                   className="hidden rounded-full border border-black/10 bg-white/80 px-3 py-1 text-xs font-semibold text-[var(--foreground)] shadow-[0_6px_14px_rgba(17,24,39,0.08)] sm:inline"

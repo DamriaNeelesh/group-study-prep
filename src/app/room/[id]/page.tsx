@@ -6,6 +6,7 @@ import { useParams, useRouter } from "next/navigation";
 import { SyncedPlayer } from "@/components/SyncedPlayer";
 import { RoomCall } from "@/components/RoomCall";
 import { RoomChatPanel } from "@/components/RoomChatPanel";
+import { RoomTelemetryPanel } from "@/components/RoomTelemetryPanel";
 import { StagePanel } from "@/components/StagePanel";
 import { TablePanel } from "@/components/TablePanel";
 import { Toast } from "@/components/Toast";
@@ -67,6 +68,9 @@ export default function RoomPage() {
     ? roomSocket.room?.playbackRate ?? 1
     : roomSupabase.room?.playbackRate ?? 1;
   const chatMessages = useSocket ? roomSocket.chatMessages : [];
+  const roomCreatedBy = useSocket
+    ? roomSocket.room?.createdBy ?? null
+    : roomSupabase.room?.createdBy ?? null;
 
   const [videoInput, setVideoInput] = useState("");
   const [videoError, setVideoError] = useState<string | null>(null);
@@ -420,6 +424,15 @@ export default function RoomPage() {
                 )}
               </div>
             </div>
+
+            {useSocket && roomId ? (
+              <RoomTelemetryPanel
+                roomId={roomId}
+                bearerToken={auth.session?.access_token ?? null}
+                roomCreatedBy={roomCreatedBy}
+                viewerUserId={auth.user?.id ?? null}
+              />
+            ) : null}
           </aside>
         </div>
       </main>

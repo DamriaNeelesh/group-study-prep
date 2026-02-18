@@ -16,7 +16,9 @@ Stack:
    - `public.profiles` (display names)
 
    SQL file: `supabase/studyroom_init.sql`
-3. Enable auth:
+3. (Optional) Enable telemetry + API keys (recommended for production observability):
+   - `supabase/studyroom_tracking.sql`
+4. Enable auth:
    - Guest mode uses Supabase Anonymous Auth, so you must enable it:
      Supabase Dashboard -> Authentication -> Providers -> Anonymous -> Enable
    - Google sign-in is optional (still via Supabase Auth).
@@ -56,7 +58,7 @@ Open `http://localhost:3000`:
 
 ## Manual Test Checklist
 
-1. Enable Anonymous provider in Supabase (see Setup step 3).
+1. Enable Anonymous provider in Supabase (see Setup step 4).
 2. Open the app in 2 browser windows (or 1 normal + 1 incognito).
 3. Window A: click "Create Room".
 4. Window B: open the copied room link.
@@ -67,7 +69,8 @@ Open `http://localhost:3000`:
    - Click "Camera On" / "Mic On" in both windows.
    - Verify you can see/hear the other participant.
 
-If using socket sync (v2), Meet (mesh) is replaced by Stage (LiveKit).
+If using socket sync (v2), chat is enabled and Meet signaling runs through the realtime service.
+Stage/Table (LiveKit) are optional, advanced rooms for larger groups.
 
 ## Notes
 
@@ -111,6 +114,17 @@ Metrics: `http://localhost:4000/metrics`
 
 - Meet uses:
   - WebRTC (peer-to-peer mesh) for camera/mic
-  - Supabase Realtime broadcast for signaling (offer/answer/ICE)
+  - Socket.IO (v2 realtime service) for signaling + presence
   - STUN only by default; for real-world reliability you will likely need a TURN server.
   - `getUserMedia()` requires HTTPS (or localhost) to access camera/microphone.
+
+## Telemetry + API Keys
+
+If you run `supabase/studyroom_tracking.sql`, the backend can record server-side events
+(video commands, chat, meet join/leave) into `public.telemetry_events`.
+
+The app also exposes API key management + telemetry read endpoints under `src/app/api/`
+so you can build an admin dashboard without exposing the Supabase service role key to the browser.
+
+The Room page includes an owner-only "Insights" panel that reads telemetry from
+`/api/telemetry/room/<roomId>`.

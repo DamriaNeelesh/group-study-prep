@@ -17,6 +17,8 @@
     "start": "next start -p 3000",
     "start:lecture": "npm --prefix services/lecture-server run start",
     "start:realtime": "npm --prefix services/realtime run start",
+    "supabase:apply": "node scripts/supabase-apply-studyroom.mjs",
+    "supabase:verify": "node scripts/verify-studyroom-supabase.mjs",
     "lint": "eslint"
   },
   "dependencies": {

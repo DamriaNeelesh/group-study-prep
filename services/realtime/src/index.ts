@@ -43,6 +43,8 @@ type SocketData = {
   roomId?: string;
   ip?: string;
   displayName?: string;
+  clientId?: string;
+  tabId?: string;
 };
 
 type ChatMessage = {
@@ -73,6 +75,9 @@ const REDIS_URL = requiredEnv("REDIS_URL");
 const SUPABASE_URL = requiredEnv("SUPABASE_URL");
 const SUPABASE_SERVICE_ROLE_KEY = requiredEnv("SUPABASE_SERVICE_ROLE_KEY");
 const SUPABASE_JWT_SECRET = optionalEnv("SUPABASE_JWT_SECRET");
+const TELEMETRY_ENABLED_RAW = optionalEnv("TELEMETRY_ENABLED");
+const TELEMETRY_ENABLED =
+  TELEMETRY_ENABLED_RAW === "1" || TELEMETRY_ENABLED_RAW?.toLowerCase() === "true";
 
 const SYNC_EXEC_BUFFER_MS = envInt("SYNC_EXEC_BUFFER_MS", 2000);
 const SYNC_SEEK_BUFFER_MS = envInt("SYNC_SEEK_BUFFER_MS", 2500);
@@ -87,6 +92,36 @@ const LIVEKIT_API_KEY = optionalEnv("LIVEKIT_API_KEY");
 const LIVEKIT_API_SECRET = optionalEnv("LIVEKIT_API_SECRET");
 
 const metrics = createMetrics();
+
+function parseCorsOrigin(raw: string | undefined) {
+  const patterns = (raw || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+  if (patterns.length === 0) return "*";
+  if (patterns.includes("*")) return "*";
+
+  const matchers = patterns.map((p) => {
+    if (!p.includes("*")) return { kind: "exact" as const, value: p.toLowerCase() };
+    const escaped = p
+      .replace(/[.+?^${}()|[\]\\]/g, "\\$&")
+      // Convert user-friendly wildcard patterns like `https://*.vercel.app` into a safe regex.
+      .replace(/\*/g, ".*");
+    return { kind: "regex" as const, value: new RegExp(`^${escaped}$`, "i") };
+  });
+
+  // `cors` allows origin to be missing for non-browser clients; allow it.
+  return (origin: string | undefined, cb: (err: Error | null, allow?: boolean) => void) => {
+    if (!origin) return cb(null, true);
+    const lowered = origin.toLowerCase();
+    for (const m of matchers) {
+      if (m.kind === "exact" && lowered === m.value) return cb(null, true);
+      if (m.kind === "regex" && m.value.test(origin)) return cb(null, true);
+    }
+    return cb(new Error("cors_origin_not_allowed"), false);
+  };
+}
 
 function roomSocketRoom(roomId: string) {
   return `room:${roomId}`;
@@ -198,7 +233,7 @@ async function main() {
   const io = new Server(httpServer, {
     parser: msgpackParser,
     cors: {
-      origin: process.env.CORS_ORIGIN?.split(",").map((s) => s.trim()) ?? "*",
+      origin: parseCorsOrigin(optionalEnv("CORS_ORIGIN")),
       methods: ["GET", "POST"],
     },
     connectionStateRecovery: {
@@ -222,6 +257,39 @@ async function main() {
   const supabaseAdmin = createSupabaseClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
     auth: { persistSession: false, autoRefreshToken: false },
   });
+
+  let telemetryEnabled = TELEMETRY_ENABLED;
+
+  async function logTelemetryEvent(args: {
+    roomId: string | null;
+    userId: string | null;
+    type: string;
+    payload?: Record<string, unknown>;
+  }) {
+    if (!telemetryEnabled) return;
+    try {
+      const { error } = await supabaseAdmin.from("telemetry_events").insert({
+        source: "realtime",
+        room_id: args.roomId,
+        user_id: args.userId,
+        type: args.type,
+        payload: args.payload ?? {},
+      });
+      if (error) {
+        const msg = String(error.message || "").toLowerCase();
+        // If the telemetry tables aren't installed yet, avoid spamming logs and wasting requests.
+        if (
+          msg.includes("telemetry_events") &&
+          (msg.includes("does not exist") || msg.includes("schema cache") || msg.includes("could not find"))
+        ) {
+          telemetryEnabled = false;
+        }
+        log.debug({ err: error, type: args.type }, "telemetry insert failed");
+      }
+    } catch (e) {
+      log.debug({ err: e, type: args.type }, "telemetry insert threw");
+    }
+  }
 
   const livekitConfigured = Boolean(LIVEKIT_URL && LIVEKIT_API_KEY && LIVEKIT_API_SECRET);
   const livekitRoomService = livekitConfigured
@@ -400,6 +468,10 @@ async function main() {
       socket.data.isAnonymous = verified.isAnonymous;
       socket.data.ip = ip;
       socket.data.displayName = sanitizeDisplayName(authPayload.displayName) ?? undefined;
+      const clientId = sanitizeIdPart(authPayload.clientId);
+      const tabId = sanitizeIdPart(authPayload.tabId);
+      socket.data.clientId = clientId || undefined;
+      socket.data.tabId = tabId || undefined;
       metrics.connectionsTotal.inc({ result: "ok" });
       return next();
     } catch (e) {
@@ -471,7 +543,20 @@ async function main() {
       leaveCallRoom();
       const roomId = socket.data.roomId;
       const userId = socket.data.userId;
-      if (roomId && userId) void decrementPresence(roomId, userId);
+      if (roomId && userId) {
+        void decrementPresence(roomId, userId);
+        void logTelemetryEvent({
+          roomId,
+          userId,
+          type: "room:leave",
+          payload: {
+            reason: "disconnect",
+            displayName: socket.data.displayName ?? null,
+            clientId: socket.data.clientId ?? null,
+            tabId: socket.data.tabId ?? null,
+          },
+        });
+      }
       socket.data.roomId = undefined;
     });
 
@@ -501,11 +586,32 @@ async function main() {
       if (prevRoomId && prevRoomId !== roomId) {
         socket.leave(roomSocketRoom(prevRoomId));
         void decrementPresence(prevRoomId, userId);
+        void logTelemetryEvent({
+          roomId: prevRoomId,
+          userId,
+          type: "room:leave",
+          payload: {
+            reason: "switch_room",
+            displayName: socket.data.displayName ?? null,
+            clientId: socket.data.clientId ?? null,
+            tabId: socket.data.tabId ?? null,
+          },
+        });
       }
 
       socket.data.roomId = roomId;
       socket.join(roomSocketRoom(roomId));
       await incrementPresence(roomId, userId);
+      void logTelemetryEvent({
+        roomId,
+        userId,
+        type: "room:join",
+        payload: {
+          displayName: socket.data.displayName ?? null,
+          clientId: socket.data.clientId ?? null,
+          tabId: socket.data.tabId ?? null,
+        },
+      });
 
       const t0 = Date.now();
       try {
@@ -606,6 +712,12 @@ async function main() {
           fromUserId: userId,
           at: new Date().toISOString(),
         });
+        void logTelemetryEvent({
+          roomId,
+          userId,
+          type: "hand:raise",
+          payload: { at: new Date().toISOString() },
+        });
         if (typeof ack === "function") ack({ ok: true });
         return;
       }
@@ -655,6 +767,19 @@ async function main() {
         await addPendingAction(redis, roomId, action);
         void scheduleNextRoomAdvance(roomId);
         metrics.commandsTotal.inc({ type: command.type });
+
+        void logTelemetryEvent({
+          roomId,
+          userId,
+          type: command.type,
+          payload: {
+            seq,
+            execAtMs,
+            serverNowMs,
+            command,
+            patch: action.patch,
+          },
+        });
 
         io.to(roomSocketRoom(roomId)).emit("room:action", action);
         metrics.roomStateFetchDurationMs.observe(Date.now() - t0);
@@ -720,6 +845,17 @@ async function main() {
         log.warn({ err: e, roomId }, "chat append failed");
       }
 
+      void logTelemetryEvent({
+        roomId,
+        userId,
+        type: "chat:send",
+        payload: {
+          messageId: message.id,
+          displayName,
+          length: message.message.length,
+        },
+      });
+
       io.to(roomSocketRoom(roomId)).emit("chat:message", message);
       if (typeof ack === "function") ack({ ok: true, message });
     });
@@ -765,11 +901,26 @@ async function main() {
       socket.join(roomSocketRoom(roomId));
 
       emitCallPresence(roomId);
+      void logTelemetryEvent({
+        roomId,
+        userId: socket.data.userId,
+        type: "call:join",
+        payload: { peerId, displayName, camOn, micOn },
+      });
       if (typeof ack === "function") ack({ ok: true });
     });
 
     socket.on("call:leave", (_payload: unknown, ack?: (res: unknown) => void) => {
+      const membership = callMembershipBySocketId.get(socket.id);
       leaveCallRoom();
+      if (membership) {
+        void logTelemetryEvent({
+          roomId: membership.roomId,
+          userId: socket.data.userId,
+          type: "call:leave",
+          payload: { peerId: membership.peerId },
+        });
+      }
       if (typeof ack === "function") ack({ ok: true });
     });
 
@@ -795,6 +946,12 @@ async function main() {
       room.set(membership.peerId, current);
 
       emitCallPresence(membership.roomId);
+      void logTelemetryEvent({
+        roomId: membership.roomId,
+        userId: socket.data.userId,
+        type: "call:presence:update",
+        payload: { peerId: membership.peerId, camOn: current.camOn, micOn: current.micOn },
+      });
       if (typeof ack === "function") ack({ ok: true });
     });
 

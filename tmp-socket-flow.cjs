@@ -216,17 +216,23 @@ async function run() {
     await waitForServer("http://127.0.0.1:4000/healthz", 180000);
     await waitForServer(baseUrl, 180000);
 
-    const browser = await chromium.launch({
-      headless: true,
-      args: [
-        "--autoplay-policy=no-user-gesture-required",
-        "--use-fake-ui-for-media-stream",
-        "--use-fake-device-for-media-stream",
-      ],
-    });
-    const contextA = await browser.newContext({ viewport: { width: 1440, height: 900 } });
-    const contextB = await browser.newContext({ viewport: { width: 1440, height: 900 } });
-    const contextC = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const launchArgs = [
+      "--autoplay-policy=no-user-gesture-required",
+      "--disable-background-timer-throttling",
+      "--disable-backgrounding-occluded-windows",
+      "--disable-renderer-backgrounding",
+      "--use-fake-ui-for-media-stream",
+      "--use-fake-device-for-media-stream",
+    ];
+
+    // Separate browsers per "student" to reduce background-tab throttling flakiness.
+    const browserA = await chromium.launch({ headless: true, args: launchArgs });
+    const browserB = await chromium.launch({ headless: true, args: launchArgs });
+    const browserC = await chromium.launch({ headless: true, args: launchArgs });
+
+    const contextA = await browserA.newContext({ viewport: { width: 1440, height: 900 } });
+    const contextB = await browserB.newContext({ viewport: { width: 1440, height: 900 } });
+    const contextC = await browserC.newContext({ viewport: { width: 1440, height: 900 } });
     await contextA.grantPermissions(["camera", "microphone"], { origin: baseUrl });
     await contextB.grantPermissions(["camera", "microphone"], { origin: baseUrl });
     await contextC.grantPermissions(["camera", "microphone"], { origin: baseUrl });
@@ -281,6 +287,16 @@ async function run() {
     const lateJoinA = await readPlaybackSnapshot(pageA);
     const lateJoinB = await readPlaybackSnapshot(pageB);
     assertDrift("late-join playing", [lateJoinA.seconds, lateJoinB.seconds], 2);
+
+    // Student A opens a second tab (same auth/session) and should stay in sync too.
+    const pageA2 = await contextA.newPage();
+    await pageA2.goto(roomUrl, { waitUntil: "networkidle", timeout: 120000 });
+    await waitForRoomReady(pageA2, 120000, true);
+    await waitForPlaybackState(pageA2, "Playing", 90000);
+    await wait(1500);
+    const tabJoinA = await readPlaybackSnapshot(pageA);
+    const tabJoinA2 = await readPlaybackSnapshot(pageA2);
+    assertDrift("cross-tab join", [tabJoinA.seconds, tabJoinA2.seconds], 2);
 
     // Student B pauses; must pause for everyone.
     const pauseButtonB = pageB.getByRole("button", { name: "Pause" });
@@ -343,6 +359,18 @@ async function run() {
 
     await pageA.getByText(message).first().waitFor({ timeout: 45000 });
     await pageB.getByText(message).first().waitFor({ timeout: 45000 });
+    await pageA2.getByText(message).first().waitFor({ timeout: 45000 });
+
+    // Cross-tab chat: message from A's second tab should deliver to others too.
+    const message2 = `socket-cross-tab-${Date.now()}`;
+    const chatInputA2 = pageA2.getByPlaceholder("Type a message...");
+    const sendButtonA2 = pageA2.getByRole("button", { name: "Send" });
+    await chatInputA2.waitFor({ state: "visible", timeout: 45000 });
+    await chatInputA2.fill(message2);
+    await sendButtonA2.click();
+
+    await pageA.getByText(message2).first().waitFor({ timeout: 45000 });
+    await pageB.getByText(message2).first().waitFor({ timeout: 45000 });
 
     // Camera/mic interaction validation (students A & B).
     const joinMeetA = pageA.getByRole("button", { name: "Join Meet" });
@@ -403,7 +431,9 @@ async function run() {
     await contextA.close();
     await contextB.close();
     await contextC.close();
-    await browser.close();
+    await browserA.close();
+    await browserB.close();
+    await browserC.close();
   } finally {
     if (!succeeded) {
       console.log("REALTIME_EXIT", JSON.stringify(realtimeExit));
